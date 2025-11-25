@@ -1,15 +1,36 @@
-import 'package:egcart_mobile/views/home_view.dart';
+import 'package:egcart_mobile/route/route.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:get/get.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() {
-  runApp(EGCartApp());
+import 'controller/supabase_controller.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load(fileName: "assets/.env");
+
+  final String supabaseKey = dotenv.env['SUPABASE_KEY']!;
+
+  final String supabaseUrl = dotenv.env['SUPABASE_URL']!;
+
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseKey);
+
+  Get.put(SupabaseController());
+
+  runApp(MyApp());
 }
 
-class EGCartApp extends StatelessWidget {
-  const EGCartApp({super.key});
+class MyApp extends StatelessWidget {
+  final _appRouter = AppRouter();
+
+  MyApp({super.key}); // Initialize your AutoRouter
 
   @override
   Widget build(BuildContext context) {
-    return HomePage();
+    return MaterialApp.router(
+      routerConfig: _appRouter.config(), // Use the delegate from your router
+    );
   }
 }

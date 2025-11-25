@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 
 Widget buildCategoryCard(String title, IconData icon, Color color) {
   return Container(
-    width: 100,
-    margin: EdgeInsets.only(right: 16),
+    width: 110,
+    margin: EdgeInsets.only(right: 16, bottom: 16, top: 16),
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.08),
-          blurRadius: 8,
+          color: Colors.black.withOpacity(0.12),
+          blurRadius: 10,
           offset: Offset(0, 2),
         ),
       ],
