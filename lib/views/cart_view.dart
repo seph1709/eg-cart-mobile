@@ -262,26 +262,31 @@ class _CartViewState extends State<CartView> {
                                 alignment: Alignment.center,
                                 child: GetBuilder<SupabaseController>(
                                   builder: (c) {
-                                    return Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.search,
-                                          color: Colors.white,
-                                          size: 22,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          selectedProduct.isNotEmpty
-                                              ? "Find"
-                                              : "Find All",
-                                          style: TextStyle(
-                                            fontSize: 18,
+                                    return GestureDetector(
+                                      onTap: () {
+                                        context.pushRoute(MapView());
+                                      },
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.search,
                                             color: Colors.white,
+                                            size: 22,
                                           ),
-                                        ),
-                                      ],
+                                          SizedBox(width: 8),
+                                          Text(
+                                            selectedProduct.isNotEmpty
+                                                ? "Find"
+                                                : "Find All",
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     );
                                   },
                                 ),

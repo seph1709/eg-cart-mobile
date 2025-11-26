@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:collection';
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as status;
 import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -28,40 +26,29 @@ class MapView extends StatefulWidget {
 
 class _MapViewState extends State<MapView>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  // ✅ Initial configuration values
-  final String _esp32IpAddress = "192.168.1.100";
+  final String _esp32IpAddress = "172.16.42.99";
   final String _targetCartId = "cart001";
   num baseConvertion = 100;
   double roomWidth = 7.5;
   double roomHeight = 7.0;
 
-  // ✅ Product locations list (in meters, independent of GeoJSON)
   List<Map<String, dynamic>> listOfProductsLocation = [
     {"id": "P001", "position": const Offset(1.0, 1.0)},
     {"id": "P002", "position": const Offset(2.0, 3.0)},
     {"id": "P003", "position": const Offset(4.0, 5.0)},
   ];
 
-  // ✅ GeoJSON map data
   Map<String, dynamic>? geoJsonData;
   String? _loadedFileName;
-
-  // ✅ Computed paths (updated when tag position changes)
   Map<String, List<Offset>> _computedPaths = {};
   Offset? _lastPathComputePosition;
-
-  // ✅ Hidden product IDs (paths not shown when tapped)
-  Set<String> _hiddenProductPaths = {};
-
-  // ✅ Nearest product ID (dynamically updated)
+  final Set<String> _hiddenProductPaths = {};
   String? _nearestProductId;
-
-  // ✅ Follow/focus mode
   bool _isFollowingTag = false;
 
   String get _wsUrl => 'ws://$_esp32IpAddress/ws';
   var links =
-      "{\"links\":[{\"A\":\"A0084\",\"R\":\"6.10\"},{\"A\":\"A0085\",\"R\":\"4.30\"},{\"A\":\"A0086\",\"R\":\"6.10\"},{\"A\":\"A0087\",\"R\":\"4.30\"}]}";
+      "{\"links\":[{\"A\":\"A0084\",\"R\":\"3.50\"},{\"A\":\"A0085\",\"R\":\"4.20\"},{\"A\":\"A0086\",\"R\":\"5.10\"},{\"A\":\"A0087\",\"R\":\"3.80\"}]}";
 
   WebSocketChannel? _channel;
   bool _isConnected = false;
@@ -79,11 +66,12 @@ class _MapViewState extends State<MapView>
   static const Duration _connectionTimeout = Duration(seconds: 10);
 
   Offset? _currentTagPosition;
+  Offset? _targetTagPosition;
   double _currentAccuracy = 0.0;
   late AnimationController _animationController;
-  late Animation<Offset> _positionAnimation;
-
   late AnimationController _arrowAnimationController;
+  late AnimationController _continuousAnimationController;
+  Timer? _positionUpdateTimer;
 
   final TransformationController _transformationController =
       TransformationController();
@@ -99,8 +87,9 @@ class _MapViewState extends State<MapView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 150),
       vsync: this,
     );
 
@@ -109,9 +98,15 @@ class _MapViewState extends State<MapView>
       vsync: this,
     )..repeat();
 
+    _continuousAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
     _loadDefaultGeoJsonData();
     _connectWebSocket();
     _startHeartbeatMonitor();
+    _startContinuousPositionUpdate();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -121,7 +116,39 @@ class _MapViewState extends State<MapView>
     });
   }
 
-  // ✅ Request storage permission
+  void _startContinuousPositionUpdate() {
+    _positionUpdateTimer?.cancel();
+    _positionUpdateTimer = Timer.periodic(const Duration(milliseconds: 50), (
+      timer,
+    ) {
+      if (_targetTagPosition != null &&
+          _currentTagPosition != null &&
+          mounted) {
+        final distance = math.sqrt(
+          math.pow(_targetTagPosition!.dx - _currentTagPosition!.dx, 2) +
+              math.pow(_targetTagPosition!.dy - _currentTagPosition!.dy, 2),
+        );
+
+        if (distance > 0.01) {
+          final speed = distance > 0.5 ? 0.25 : 0.15;
+
+          setState(() {
+            _currentTagPosition = Offset(
+              _currentTagPosition!.dx +
+                  (_targetTagPosition!.dx - _currentTagPosition!.dx) * speed,
+              _currentTagPosition!.dy +
+                  (_targetTagPosition!.dy - _currentTagPosition!.dy) * speed,
+            );
+          });
+
+          if (_isFollowingTag) {
+            _centerOnTag();
+          }
+        }
+      }
+    });
+  }
+
   Future<bool> _requestStoragePermission() async {
     if (kIsWeb) {
       return true;
@@ -461,7 +488,7 @@ class _MapViewState extends State<MapView>
               geoJsonData = data;
             });
             if (kDebugMode) {
-              print('✅ Loaded GeoJSON: ${roomWidth}m x ${roomHeight}m');
+              debugPrint('✅ Loaded GeoJSON: ${roomWidth}m x ${roomHeight}m');
             }
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -478,7 +505,9 @@ class _MapViewState extends State<MapView>
         geoJsonData = data;
       });
     } catch (e) {
-      if (kDebugMode) print('❌ Failed to parse GeoJSON: $e');
+      if (kDebugMode) {
+        debugPrint('❌ Failed to parse GeoJSON: $e');
+      }
       _showSnackBar('Failed to parse GeoJSON file', isError: true);
     }
   }
@@ -489,11 +518,15 @@ class _MapViewState extends State<MapView>
 
       if (!hasPermission) {
         _showSnackBar('Storage permission denied', isError: true);
-        if (kDebugMode) print('⚠️ Storage permission denied');
+        if (kDebugMode) {
+          debugPrint('⚠️ Storage permission denied');
+        }
         return;
       }
 
-      if (kDebugMode) print('✅ Storage permission granted');
+      if (kDebugMode) {
+        debugPrint('✅ Storage permission granted');
+      }
 
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -514,13 +547,17 @@ class _MapViewState extends State<MapView>
         _showSnackBar('✅ Loaded: ${result.files.single.name}');
 
         if (kDebugMode) {
-          print('✅ GeoJSON file loaded: ${result.files.single.name}');
+          debugPrint('✅ GeoJSON file loaded: ${result.files.single.name}');
         }
       } else {
-        if (kDebugMode) print('⚠️ File picker cancelled');
+        if (kDebugMode) {
+          debugPrint('⚠️ File picker cancelled');
+        }
       }
     } catch (e) {
-      if (kDebugMode) print('❌ Error picking file: $e');
+      if (kDebugMode) {
+        debugPrint('❌ Error picking file: $e');
+      }
       _showSnackBar('Failed to load file', isError: true);
     }
   }
@@ -553,20 +590,18 @@ class _MapViewState extends State<MapView>
     _transformationController.value = matrix;
 
     if (kDebugMode) {
-      print(
+      debugPrint(
         '🔍 Zoom set: scale=${scale.toStringAsFixed(3)}, screenWidth=$screenWidth, canvasWidth=$canvasWidth',
       );
     }
   }
 
-  // ✅ Center view on tag position with smooth animation
   void _centerOnTag() {
     if (_currentTagPosition == null) return;
 
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
-    // Convert tag position to canvas pixels
     final tagCanvasX =
         metersToPixels(
           _currentTagPosition!.dx,
@@ -580,33 +615,18 @@ class _MapViewState extends State<MapView>
         ) +
         50;
 
-    // Get current scale
-    final currentMatrix = _transformationController.value;
-    final currentScale = currentMatrix.getMaxScaleOnAxis();
-
-    // Use zoom level of 1.5x for good visibility
     final targetScale = 1.5;
 
-    // Calculate offset to center tag on screen
     final offsetX = screenWidth / 2 - (tagCanvasX * targetScale);
     final offsetY = screenHeight / 2 - (tagCanvasY * targetScale);
 
-    // Create new matrix
     final newMatrix = Matrix4.identity()
       ..translate(offsetX, offsetY)
       ..scale(targetScale);
 
-    // Animate to new position
     _transformationController.value = newMatrix;
-
-    if (kDebugMode) {
-      print(
-        '📍 Centered on tag at (${_currentTagPosition!.dx.toStringAsFixed(2)}, ${_currentTagPosition!.dy.toStringAsFixed(2)})',
-      );
-    }
   }
 
-  // ✅ Toggle follow mode
   void _toggleFollowMode() {
     setState(() {
       _isFollowingTag = !_isFollowingTag;
@@ -614,13 +634,16 @@ class _MapViewState extends State<MapView>
 
     if (_isFollowingTag) {
       _centerOnTag();
-      if (kDebugMode) print('✅ Follow mode enabled');
+      if (kDebugMode) {
+        debugPrint('✅ Follow mode enabled');
+      }
     } else {
-      if (kDebugMode) print('❌ Follow mode disabled');
+      if (kDebugMode) {
+        debugPrint('❌ Follow mode disabled');
+      }
     }
   }
 
-  // ✅ Compute paths for all products from current tag position
   void _computePathsFromTag() {
     if (_currentTagPosition == null || geoJsonData == null) return;
 
@@ -635,7 +658,7 @@ class _MapViewState extends State<MapView>
     }
 
     if (kDebugMode) {
-      print(
+      debugPrint(
         '🔄 Recomputing paths from tag position: (${_currentTagPosition!.dx.toStringAsFixed(2)}, ${_currentTagPosition!.dy.toStringAsFixed(2)})',
       );
     }
@@ -670,12 +693,11 @@ class _MapViewState extends State<MapView>
     });
 
     if (kDebugMode) {
-      print('✅ Computed ${newPaths.length} paths');
-      print('🎯 Nearest product: $_nearestProductId');
+      debugPrint('✅ Computed ${newPaths.length} paths');
+      debugPrint('🎯 Nearest product: $_nearestProductId');
     }
   }
 
-  // ✅ Update which product is nearest (excluding hidden products)
   void _updateNearestProduct() {
     if (_currentTagPosition == null) return;
 
@@ -706,7 +728,6 @@ class _MapViewState extends State<MapView>
     });
   }
 
-  // ✅ Handle tap on product pinpoint
   void _handleProductTap(Offset tapPosition) {
     final matrix = _transformationController.value;
 
@@ -728,7 +749,7 @@ class _MapViewState extends State<MapView>
         );
 
     if (kDebugMode) {
-      print(
+      debugPrint(
         '👆 Tap at canvas: (${metersX.toStringAsFixed(2)}, ${metersY.toStringAsFixed(2)})',
       );
     }
@@ -746,10 +767,14 @@ class _MapViewState extends State<MapView>
         setState(() {
           if (_hiddenProductPaths.contains(productId)) {
             _hiddenProductPaths.remove(productId);
-            if (kDebugMode) print('✅ Showing path to $productId');
+            if (kDebugMode) {
+              debugPrint('✅ Showing path to $productId');
+            }
           } else {
             _hiddenProductPaths.add(productId);
-            if (kDebugMode) print('❌ Hiding path to $productId');
+            if (kDebugMode) {
+              debugPrint('❌ Hiding path to $productId');
+            }
           }
           _updateNearestProduct();
         });
@@ -761,30 +786,56 @@ class _MapViewState extends State<MapView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _positionUpdateTimer?.cancel();
     _cleanup();
     _animationController.dispose();
     _arrowAnimationController.dispose();
+    _continuousAnimationController.dispose();
     _transformationController.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (kDebugMode) print('📱 App lifecycle: $state');
+    if (kDebugMode) {
+      debugPrint('📱 App lifecycle: $state');
+    }
     if (state == AppLifecycleState.paused) {
-      if (kDebugMode) print('⏸️ App paused - maintaining connection');
+      if (kDebugMode) {
+        debugPrint('⏸️ App paused - maintaining connection');
+      }
     } else if (state == AppLifecycleState.resumed) {
-      if (kDebugMode) print('▶️ App resumed - checking connection');
+      if (kDebugMode) {
+        debugPrint('▶️ App resumed - checking connection');
+      }
       _checkConnectionHealth();
     }
   }
 
   void _cleanup() {
     _pingTimer?.cancel();
+    _pingTimer = null;
+
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
     _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+
     _streamSubscription?.cancel();
-    _channel?.sink.close(status.goingAway);
+    _streamSubscription = null;
+
+    if (_channel != null) {
+      try {
+        _channel!.sink.close();
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('⚠️ Channel already closed: $e');
+        }
+      }
+      _channel = null;
+    }
+
     _isConnected = false;
     _isConnecting = false;
   }
@@ -798,7 +849,7 @@ class _MapViewState extends State<MapView>
         );
         if (timeSinceLastMessage > _heartbeatTimeout && _isConnected) {
           if (kDebugMode) {
-            print(
+            debugPrint(
               '💔 Heartbeat timeout: ${timeSinceLastMessage.inSeconds}s since last message',
             );
           }
@@ -809,14 +860,18 @@ class _MapViewState extends State<MapView>
   }
 
   void _handleSilentDisconnection() {
-    if (kDebugMode) print('🔌 Detected silent disconnection');
+    if (kDebugMode) {
+      debugPrint('🔌 Detected silent disconnection');
+    }
     _isConnected = false;
     _reconnectWithBackoff();
   }
 
   void _checkConnectionHealth() {
     if (!_isConnected && !_isConnecting) {
-      if (kDebugMode) print('🔍 Connection unhealthy, attempting reconnect');
+      if (kDebugMode) {
+        debugPrint('🔍 Connection unhealthy, attempting reconnect');
+      }
       _reconnectWithBackoff();
     } else if (_lastMessageTime != null) {
       final timeSince = DateTime.now().difference(_lastMessageTime!);
@@ -832,9 +887,13 @@ class _MapViewState extends State<MapView>
       if (_isConnected && _channel != null) {
         try {
           _channel!.sink.add('ping');
-          if (kDebugMode) print('🏓 Ping sent');
+          if (kDebugMode) {
+            debugPrint('🏓 Ping sent');
+          }
         } catch (e) {
-          if (kDebugMode) print('❌ Ping failed: $e');
+          if (kDebugMode) {
+            debugPrint('❌ Ping failed: $e');
+          }
           _handleSilentDisconnection();
         }
       }
@@ -843,51 +902,97 @@ class _MapViewState extends State<MapView>
 
   Future<void> _connectWebSocket() async {
     if (_isConnecting) {
-      if (kDebugMode) print('⏳ Already connecting...');
+      if (kDebugMode) {
+        debugPrint('⏳ Already connecting...');
+      }
       return;
     }
 
     _isConnecting = true;
-    _cleanup();
+
+    _pingTimer?.cancel();
+    _reconnectTimer?.cancel();
+    _heartbeatTimer?.cancel();
+    _streamSubscription?.cancel();
+
+    if (_channel != null) {
+      try {
+        await _channel!.sink.close();
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('⚠️ Error closing previous channel: $e');
+        }
+      }
+      _channel = null;
+    }
 
     try {
-      if (kDebugMode) print('🔌 Connecting to WebSocket: $_wsUrl');
-      try {
-        _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
-        final timeoutFuture = Future.delayed(_connectionTimeout, () => false);
-        final connectionFuture = _channel!.stream.first.then((_) => true);
-        final connected = await Future.any([connectionFuture, timeoutFuture]);
+      if (kDebugMode) {
+        debugPrint('🔌 Connecting to WebSocket: $_wsUrl');
+      }
 
-        if (!connected) {
-          throw TimeoutException('WebSocket connection timeout');
+      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+
+      final timeoutFuture = Future.delayed(_connectionTimeout, () => false);
+      final connectionFuture = _channel!.ready.then((_) => true).catchError((
+        e,
+      ) {
+        if (kDebugMode) {
+          debugPrint('❌ Connection error: $e');
         }
+        return false;
+      });
 
-        _streamSubscription = _channel!.stream.listen(
-          _onWebSocketMessage,
-          onError: _onWebSocketError,
-          onDone: _onWebSocketDone,
-          cancelOnError: false,
-        );
+      final connected = await Future.any([connectionFuture, timeoutFuture]);
 
+      if (!connected || !mounted) {
+        throw TimeoutException('WebSocket connection timeout');
+      }
+
+      _streamSubscription = _channel!.stream.listen(
+        _onWebSocketMessage,
+        onError: _onWebSocketError,
+        onDone: _onWebSocketDone,
+        cancelOnError: false,
+      );
+
+      if (mounted) {
         setState(() {
           _isConnected = true;
           _isConnecting = false;
           _reconnectAttempts = 0;
         });
-        _lastMessageTime = DateTime.now();
-        _startPingTimer();
-        if (kDebugMode) print('✅ WebSocket connected successfully');
-      } catch (e) {
-        _channel?.sink.close(status.goingAway);
-        _channel = null;
-        rethrow;
+      }
+
+      _lastMessageTime = DateTime.now();
+      _startPingTimer();
+
+      if (kDebugMode) {
+        debugPrint('✅ WebSocket connected successfully');
       }
     } catch (e) {
-      if (kDebugMode) print('❌ WebSocket Connection Error: $e');
-      setState(() {
-        _isConnected = false;
-        _isConnecting = false;
-      });
+      if (kDebugMode) {
+        debugPrint('❌ WebSocket Connection Error: $e');
+      }
+
+      if (_channel != null) {
+        try {
+          await _channel!.sink.close();
+        } catch (closeError) {
+          if (kDebugMode) {
+            debugPrint('⚠️ Error closing failed channel: $closeError');
+          }
+        }
+        _channel = null;
+      }
+
+      if (mounted) {
+        setState(() {
+          _isConnected = false;
+          _isConnecting = false;
+        });
+      }
+
       _reconnectWithBackoff();
     }
   }
@@ -897,13 +1002,13 @@ class _MapViewState extends State<MapView>
     final delayIndex = math.min(_reconnectAttempts, _backoffDelays.length - 1);
     final delay = Duration(seconds: _backoffDelays[delayIndex]);
     if (kDebugMode) {
-      print(
+      debugPrint(
         '🔄 Reconnect attempt ${_reconnectAttempts + 1} in ${delay.inSeconds}s',
       );
     }
 
     _reconnectTimer = Timer(delay, () {
-      if (mounted && !_isConnected) {
+      if (mounted && !_isConnected && !_isConnecting) {
         _reconnectAttempts++;
         _connectWebSocket();
       }
@@ -913,15 +1018,23 @@ class _MapViewState extends State<MapView>
   void _onWebSocketMessage(dynamic message) {
     try {
       _lastMessageTime = DateTime.now();
-      if (kDebugMode) print('📡 WebSocket message received: $message');
+
+      if (kDebugMode) {
+        debugPrint('📡 WebSocket message received: $message');
+      }
+
       if (message == 'pong') {
-        if (kDebugMode) print('🏓 Pong received');
+        if (kDebugMode) {
+          debugPrint('🏓 Pong received');
+        }
         return;
       }
 
       final Map<String, dynamic> data = jsonDecode(message);
+
       if (data['cart_id'] == _targetCartId) {
         final List<dynamic> anchors = data['anchors'] ?? [];
+
         final List<Map<String, String>> transformedLinks = anchors.map((
           anchor,
         ) {
@@ -932,36 +1045,52 @@ class _MapViewState extends State<MapView>
         }).toList();
 
         final newLinks = jsonEncode({'links': transformedLinks});
-        if (kDebugMode) print('✅ Transformed data: $newLinks');
+
+        if (kDebugMode) {
+          debugPrint('✅ Transformed anchor data: $newLinks');
+        }
+
         _processPositionUpdate(newLinks);
       } else {
         if (kDebugMode) {
-          print(
+          debugPrint(
             '⚠️ Ignoring data from cart_id: ${data['cart_id']} (expected: $_targetCartId)',
           );
         }
       }
     } catch (e) {
       if (kDebugMode) {
-        print('❌ Parse Error: $e');
-        print('Raw message: $message');
+        debugPrint('❌ Parse Error: $e');
+        debugPrint('Raw message: $message');
       }
     }
   }
 
   void _onWebSocketError(dynamic error) {
-    if (kDebugMode) print('❌ WebSocket Error: $error');
-    setState(() {
-      _isConnected = false;
-    });
+    if (kDebugMode) {
+      debugPrint('❌ WebSocket Error: $error');
+    }
+
+    if (mounted) {
+      setState(() {
+        _isConnected = false;
+      });
+    }
+
     _reconnectWithBackoff();
   }
 
   void _onWebSocketDone() {
-    if (kDebugMode) print('⚠️ WebSocket connection closed');
-    setState(() {
-      _isConnected = false;
-    });
+    if (kDebugMode) {
+      debugPrint('⚠️ WebSocket connection closed');
+    }
+
+    if (mounted) {
+      setState(() {
+        _isConnected = false;
+      });
+    }
+
     _reconnectWithBackoff();
   }
 
@@ -979,17 +1108,30 @@ class _MapViewState extends State<MapView>
           position: position,
           size: const Size(1000, 1000),
           baseConvertion: baseConvertion,
+          roomWidth: roomWidth,
+          roomHeight: roomHeight,
         );
       }).toList();
 
-      final activeAnchors = listOfAnchors.where((a) => a.distance > 0).toList();
+      final activeAnchors = listOfAnchors
+          .where((a) => a.distance > 0 && a.isValid)
+          .toList();
+
       if (activeAnchors.length < 3) {
-        if (kDebugMode) print('⚠️ Not enough anchors: ${activeAnchors.length}');
+        if (kDebugMode) {
+          debugPrint('⚠️ Not enough valid anchors: ${activeAnchors.length}');
+        }
         return;
       }
 
-      Trilateration trilateration = Trilateration(activeAnchors);
-      final result = trilateration.calcUserLocation();
+      Multilateration multilateration = Multilateration(
+        activeAnchors,
+        roomWidth: roomWidth,
+        roomHeight: roomHeight,
+        previousPosition: _currentTagPosition,
+      );
+
+      final result = multilateration.calcUserLocation();
 
       if (result != null) {
         final position = result['position'] as Offset;
@@ -1000,7 +1142,7 @@ class _MapViewState extends State<MapView>
         );
 
         if (kDebugMode) {
-          print(
+          debugPrint(
             '✅ Tag position: (${constrainedPosition.dx.toStringAsFixed(2)}, ${constrainedPosition.dy.toStringAsFixed(2)})m, accuracy: ±${accuracy.toStringAsFixed(2)}m',
           );
         }
@@ -1008,51 +1150,51 @@ class _MapViewState extends State<MapView>
         _updateTagPosition(constrainedPosition, accuracy);
       }
 
-      setState(() {
-        links = newLinks;
-      });
+      if (mounted) {
+        setState(() {
+          links = newLinks;
+        });
+      }
     } catch (e) {
-      if (kDebugMode) print('❌ Position calculation error: $e');
+      if (kDebugMode) {
+        debugPrint('❌ Position calculation error: $e');
+      }
     }
   }
 
   void _updateTagPosition(Offset newPosition, double accuracy) {
     if (_currentTagPosition == null) {
-      setState(() {
-        _currentTagPosition = newPosition;
-        _currentAccuracy = accuracy;
-      });
+      if (mounted) {
+        setState(() {
+          _currentTagPosition = newPosition;
+          _targetTagPosition = newPosition;
+          _currentAccuracy = accuracy;
+        });
+      }
+
       _computePathsFromTag();
 
-      // ✅ Center on tag if follow mode is enabled
       if (_isFollowingTag) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          _centerOnTag();
+          if (mounted) {
+            _centerOnTag();
+          }
         });
       }
       return;
     }
 
     _currentAccuracy = accuracy;
-    _positionAnimation =
-        Tween<Offset>(begin: _currentTagPosition!, end: newPosition).animate(
-          CurvedAnimation(
-            parent: _animationController,
-            curve: Curves.easeInOut,
-          ),
-        );
-    _animationController.forward(from: 0.0).then((_) {
-      setState(() {
-        _currentTagPosition = newPosition;
-      });
-      _computePathsFromTag();
+    _targetTagPosition = newPosition;
 
-      // ✅ Keep tag centered if follow mode is enabled
-      if (_isFollowingTag) {
-        _centerOnTag();
-      }
-    });
-    setState(() {});
+    final distance = math.sqrt(
+      math.pow(newPosition.dx - _currentTagPosition!.dx, 2) +
+          math.pow(newPosition.dy - _currentTagPosition!.dy, 2),
+    );
+
+    if (distance > 0.2) {
+      _computePathsFromTag();
+    }
   }
 
   @override
@@ -1063,11 +1205,6 @@ class _MapViewState extends State<MapView>
         metersToPixels(roomHeight, baseConvertion: baseConvertion.toInt()) +
         100;
 
-    final displayPosition =
-        _currentTagPosition != null && _animationController.isAnimating
-        ? _positionAnimation.value
-        : _currentTagPosition;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: Stack(
@@ -1076,7 +1213,6 @@ class _MapViewState extends State<MapView>
             onTapDown: (details) {
               _handleProductTap(details.localPosition);
             },
-            // ✅ Disable InteractiveViewer gestures when following tag
             child: AnimatedBuilder(
               animation: _arrowAnimationController,
               builder: (context, child) {
@@ -1086,7 +1222,6 @@ class _MapViewState extends State<MapView>
                   maxScale: 4.0,
                   boundaryMargin: const EdgeInsets.all(double.infinity),
                   constrained: false,
-                  // ✅ Disable panning when in follow mode
                   panEnabled: !_isFollowingTag,
                   scaleEnabled: !_isFollowingTag,
                   child: RepaintBoundary(
@@ -1095,7 +1230,7 @@ class _MapViewState extends State<MapView>
                         roomWidth: roomWidth,
                         roomHeight: roomHeight,
                         baseConvertion: baseConvertion,
-                        tagPosition: displayPosition,
+                        tagPosition: _currentTagPosition,
                         tagAccuracy: _currentAccuracy,
                         productsLocation: listOfProductsLocation,
                         geoJsonData: geoJsonData,
@@ -1112,7 +1247,6 @@ class _MapViewState extends State<MapView>
             ),
           ),
 
-          // ✅ Load Map button (top right)
           Positioned(
             top: 16,
             right: 16,
@@ -1157,7 +1291,6 @@ class _MapViewState extends State<MapView>
             ),
           ),
 
-          // ✅ Follow/Focus button (bottom right)
           Positioned(
             bottom: 24,
             right: 24,
@@ -1191,7 +1324,6 @@ class _MapViewState extends State<MapView>
             ),
           ),
 
-          // ✅ Follow mode indicator (top center)
           if (_isFollowingTag)
             Positioned(
               top: 16,
@@ -1209,14 +1341,10 @@ class _MapViewState extends State<MapView>
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.my_location,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
+                      children: const [
+                        Icon(Icons.my_location, color: Colors.white, size: 18),
+                        SizedBox(width: 8),
+                        Text(
                           'Following Cart',
                           style: TextStyle(
                             color: Colors.white,
@@ -1236,8 +1364,7 @@ class _MapViewState extends State<MapView>
   }
 }
 
-// ... (Rest of the code remains exactly the same: PathNode, Pathfinder, ObstacleGeometry, PriorityQueue, StaticMapCanvas, Anchor, Trilateration classes)
-
+// ✅ PathNode for A* pathfinding
 class PathNode {
   final Offset position;
   final PathNode? parent;
@@ -1255,6 +1382,7 @@ class PathNode {
   int get hashCode => position.hashCode;
 }
 
+// ✅ Pathfinder class
 class Pathfinder {
   final double roomWidth;
   final double roomHeight;
@@ -1280,10 +1408,14 @@ class Pathfinder {
   }
 
   void _extractBaseCoordinates() {
-    if (geoJsonData == null) return;
+    if (geoJsonData == null) {
+      return;
+    }
 
     final features = geoJsonData!['features'] as List?;
-    if (features == null) return;
+    if (features == null) {
+      return;
+    }
 
     for (var feature in features) {
       final properties = feature['properties'] as Map<String, dynamic>?;
@@ -1297,17 +1429,23 @@ class Pathfinder {
 
   void _buildObstacleCache() {
     _obstacles.clear();
-    if (geoJsonData == null) return;
+    if (geoJsonData == null) {
+      return;
+    }
 
     final features = geoJsonData!['features'] as List?;
-    if (features == null) return;
+    if (features == null) {
+      return;
+    }
 
     for (var feature in features) {
       final geometry = feature['geometry'];
       final properties = feature['properties'] as Map<String, dynamic>?;
       final amenity = properties?['amenity'] as String?;
 
-      if (geometry == null) continue;
+      if (geometry == null) {
+        continue;
+      }
 
       final geometryType = geometry['type'] as String?;
 
@@ -1354,7 +1492,9 @@ class Pathfinder {
 
   List<Offset> _extractPolygonPoints(Map<String, dynamic> geometry) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.isEmpty) return [];
+    if (coordinates == null || coordinates.isEmpty) {
+      return [];
+    }
 
     final ring = coordinates[0] as List;
     final points = <Offset>[];
@@ -1370,7 +1510,9 @@ class Pathfinder {
 
   List<Offset> _extractLinePoints(Map<String, dynamic> geometry) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null) return [];
+    if (coordinates == null) {
+      return [];
+    }
 
     final points = <Offset>[];
 
@@ -1427,7 +1569,9 @@ class Pathfinder {
     List<Offset> polygon,
     double buffer,
   ) {
-    if (polygon.length < 3) return false;
+    if (polygon.length < 3) {
+      return false;
+    }
 
     bool inside = false;
     for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -1441,7 +1585,9 @@ class Pathfinder {
       }
     }
 
-    if (inside) return true;
+    if (inside) {
+      return true;
+    }
 
     for (int i = 0; i < polygon.length; i++) {
       final j = (i + 1) % polygon.length;
@@ -1459,7 +1605,9 @@ class Pathfinder {
     List<Offset> polyline,
     double threshold,
   ) {
-    if (polyline.length < 2) return false;
+    if (polyline.length < 2) {
+      return false;
+    }
 
     for (int i = 0; i < polyline.length - 1; i++) {
       final distance = _distanceToLineSegment(
@@ -1601,7 +1749,9 @@ class Pathfinder {
         dy <= gridResolution;
         dy += gridResolution
       ) {
-        if (dx == 0 && dy == 0) continue;
+        if (dx == 0 && dy == 0) {
+          continue;
+        }
 
         final neighbor = Offset(
           (position.dx + dx).clamp(0.0, roomWidth),
@@ -1636,7 +1786,9 @@ class Pathfinder {
   }
 
   List<Offset> _aggressiveSmoothing(List<Offset> path) {
-    if (path.length <= 2) return path;
+    if (path.length <= 2) {
+      return path;
+    }
 
     final smoothed = <Offset>[path.first];
     int i = 0;
@@ -1707,6 +1859,7 @@ class PriorityQueue<E> {
   bool get isEmpty => _elements.isEmpty;
 }
 
+// ✅ StaticMapCanvas
 class StaticMapCanvas extends CustomPainter {
   StaticMapCanvas({
     required this.roomWidth,
@@ -1738,9 +1891,15 @@ class StaticMapCanvas extends CustomPainter {
   double baseLon = 3.92162187466;
 
   Color _getAccuracyColor(double error) {
-    if (error < 0.3) return const Color(0xFF10b981);
-    if (error < 0.7) return const Color(0xFF84cc16);
-    if (error < 1.2) return const Color(0xFFf59e0b);
+    if (error < 0.3) {
+      return const Color(0xFF10b981);
+    }
+    if (error < 0.7) {
+      return const Color(0xFF84cc16);
+    }
+    if (error < 1.2) {
+      return const Color(0xFFf59e0b);
+    }
     return const Color(0xFFef4444);
   }
 
@@ -1904,7 +2063,9 @@ class StaticMapCanvas extends CustomPainter {
     Color color,
     bool isNearest,
   ) {
-    if (path.length < 2) return;
+    if (path.length < 2) {
+      return;
+    }
 
     final pathColor = isNearest
         ? color
@@ -1965,7 +2126,9 @@ class StaticMapCanvas extends CustomPainter {
     double progress,
     Color color,
   ) {
-    if (path.length < 2) return;
+    if (path.length < 2) {
+      return;
+    }
 
     final totalLength = _calculatePathLength(path);
     final targetLength = totalLength * progress;
@@ -2039,10 +2202,14 @@ class StaticMapCanvas extends CustomPainter {
   }
 
   void _renderGeoJsonFeatures(Canvas canvas) {
-    if (geoJsonData == null) return;
+    if (geoJsonData == null) {
+      return;
+    }
 
     final features = geoJsonData!['features'] as List?;
-    if (features == null) return;
+    if (features == null) {
+      return;
+    }
 
     for (var feature in features) {
       final properties = feature['properties'] as Map<String, dynamic>?;
@@ -2057,7 +2224,9 @@ class StaticMapCanvas extends CustomPainter {
       final geometry = feature['geometry'];
       final properties = feature['properties'] as Map<String, dynamic>?;
 
-      if (geometry == null) continue;
+      if (geometry == null) {
+        continue;
+      }
 
       final geometryType = geometry['type'] as String?;
       final amenity = properties?['amenity'] as String?;
@@ -2082,7 +2251,9 @@ class StaticMapCanvas extends CustomPainter {
     String? amenity,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.length < 2) return;
+    if (coordinates == null || coordinates.length < 2) {
+      return;
+    }
 
     final paint = Paint()
       ..color = amenity == 'wall'
@@ -2119,10 +2290,14 @@ class StaticMapCanvas extends CustomPainter {
     Map<String, dynamic>? properties,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.isEmpty) return;
+    if (coordinates == null || coordinates.isEmpty) {
+      return;
+    }
 
     final ring = coordinates[0] as List;
-    if (ring.length < 3) return;
+    if (ring.length < 3) {
+      return;
+    }
 
     Color fillColor = const Color(0xFFe5e7eb);
     Color strokeColor = const Color(0xFF9ca3af);
@@ -2179,7 +2354,9 @@ class StaticMapCanvas extends CustomPainter {
     Map<String, dynamic>? properties,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.length < 2) return;
+    if (coordinates == null || coordinates.length < 2) {
+      return;
+    }
 
     final lon = (coordinates[0] as num).toDouble();
     final lat = (coordinates[1] as num).toDouble();
@@ -2326,6 +2503,7 @@ class StaticMapCanvas extends CustomPainter {
   }
 }
 
+// ✅ ANCHOR CLASS
 class Anchor {
   String id;
   Size size;
@@ -2333,6 +2511,9 @@ class Anchor {
   late double x;
   late double y;
   late double distance;
+  late bool isValid;
+  final double roomWidth;
+  final double roomHeight;
 
   Anchor(
     String range, {
@@ -2340,6 +2521,8 @@ class Anchor {
     required Offset position,
     required this.size,
     required this.baseConvertion,
+    required this.roomWidth,
+    required this.roomHeight,
   }) {
     x = position.dx;
     y = position.dy;
@@ -2347,117 +2530,160 @@ class Anchor {
     distance = (parsedDistance != null && parsedDistance >= 0)
         ? parsedDistance
         : 0.0;
+
+    final maxPossibleDistance =
+        math.sqrt(roomWidth * roomWidth + roomHeight * roomHeight) + 2.0;
+    isValid = distance > 0.1 && distance < maxPossibleDistance;
+
+    if (kDebugMode && !isValid) {
+      debugPrint(
+        '⚠️ Invalid anchor $id: distance=$distance (max=$maxPossibleDistance)',
+      );
+    }
   }
 }
 
-class Trilateration {
+// ✅ MULTILATERATION CLASS
+class Multilateration {
   List<Anchor> anchors;
+  final double roomWidth;
+  final double roomHeight;
+  final Offset? previousPosition;
 
-  Trilateration(this.anchors);
+  Multilateration(
+    this.anchors, {
+    required this.roomWidth,
+    required this.roomHeight,
+    this.previousPosition,
+  });
 
   Map<String, dynamic>? calcUserLocation() {
-    if (anchors.length < 3) return null;
+    if (anchors.length < 3) {
+      return null;
+    }
 
     try {
-      Offset? position;
-      if (anchors.length == 3) {
-        position = _linearTrilateration();
-      } else {
-        position = _nonlinearLeastSquares();
+      final cleanedAnchors = _removeOutliers(anchors);
+
+      if (cleanedAnchors.length < 3) {
+        if (kDebugMode) {
+          debugPrint('⚠️ Not enough valid anchors after outlier removal');
+        }
+        return null;
       }
 
-      position ??= _fallbackCircleIntersection();
+      Offset? position = _weightedLeastSquares(cleanedAnchors);
+
+      if (position != null && previousPosition != null) {
+        position = _applyLightSmoothing(position, previousPosition!);
+      }
 
       if (position == null || !position.dx.isFinite || !position.dy.isFinite) {
         return null;
       }
 
-      double rmsError = _calculateRMSError(position);
+      double rmsError = _calculateWeightedRMSE(position, cleanedAnchors);
+
       return {'position': position, 'accuracy': rmsError};
     } catch (e) {
-      if (kDebugMode) print('❌ Trilateration error: $e');
+      if (kDebugMode) {
+        debugPrint('❌ Multilateration error: $e');
+      }
       return null;
     }
   }
 
-  Offset? _linearTrilateration() {
-    final a1 = anchors[0];
-    final a2 = anchors[1];
-    final a3 = anchors[2];
-
-    double x1 = a1.x, y1 = a1.y, r1 = a1.distance;
-    double x2 = a2.x, y2 = a2.y, r2 = a2.distance;
-    double x3 = a3.x, y3 = a3.y, r3 = a3.distance;
-
-    if (r1 <= 0 || r2 <= 0 || r3 <= 0) return null;
-
-    double A = 2 * (x2 - x1);
-    double B = 2 * (y2 - y1);
-    double C = r1 * r1 - r2 * r2 - x1 * x1 + x2 * x2 - y1 * y1 + y2 * y2;
-    double D = 2 * (x3 - x2);
-    double E = 2 * (y3 - y2);
-    double F = r2 * r2 - r3 * r3 - x2 * x2 + x3 * x3 - y2 * y2 + y3 * y3;
-
-    double denominator = A * E - B * D;
-    if (denominator.abs() < 0.0001) {
-      return null;
+  List<Anchor> _removeOutliers(List<Anchor> allAnchors) {
+    if (allAnchors.length <= 3) {
+      return allAnchors;
     }
 
-    double x = (C * E - F * B) / denominator;
-    double y = (A * F - D * C) / denominator;
+    final List<Anchor> cleaned = [];
 
-    return Offset(x, y);
-  }
+    for (var anchor in allAnchors) {
+      int consistentCount = 0;
 
-  Offset? _nonlinearLeastSquares() {
-    double initialX = 0, initialY = 0;
-    int count = 0;
-    for (var anchor in anchors) {
-      if (anchor.distance > 0) {
-        initialX += anchor.x;
-        initialY += anchor.y;
-        count++;
+      for (var other in allAnchors) {
+        if (anchor.id == other.id) {
+          continue;
+        }
+
+        final anchorDist = math.sqrt(
+          math.pow(anchor.x - other.x, 2) + math.pow(anchor.y - other.y, 2),
+        );
+
+        final minDist = (anchor.distance - other.distance).abs();
+        final maxDist = anchor.distance + other.distance;
+
+        if (anchorDist >= minDist - 0.5 && anchorDist <= maxDist + 0.5) {
+          consistentCount++;
+        }
+      }
+
+      if (consistentCount >= (allAnchors.length / 2)) {
+        cleaned.add(anchor);
+      } else {
+        if (kDebugMode) {
+          debugPrint(
+            '🗑️ Removing outlier anchor: ${anchor.id} (dist=${anchor.distance.toStringAsFixed(2)}m)',
+          );
+        }
       }
     }
-    if (count == 0) return null;
 
-    double x = initialX / count;
-    double y = initialY / count;
+    return cleaned.isNotEmpty ? cleaned : allAnchors;
+  }
 
-    const int maxIterations = 100;
+  Offset? _weightedLeastSquares(List<Anchor> validAnchors) {
+    double x = _getInitialX(validAnchors);
+    double y = _getInitialY(validAnchors);
+
+    const int maxIterations = 80;
     const double convergenceThreshold = 1e-6;
 
     for (int iteration = 0; iteration < maxIterations; iteration++) {
       List<List<double>> J = [];
       List<double> r = [];
+      List<double> weights = [];
 
-      for (var anchor in anchors) {
-        if (anchor.distance <= 0) continue;
+      for (var anchor in validAnchors) {
+        if (anchor.distance <= 0) {
+          continue;
+        }
 
         double dx = x - anchor.x;
         double dy = y - anchor.y;
         double dist = math.sqrt(dx * dx + dy * dy);
 
-        if (dist < 0.001) dist = 0.001;
+        if (dist < 0.01) {
+          dist = 0.01;
+        }
 
         double residual = dist - anchor.distance;
         r.add(residual);
         J.add([dx / dist, dy / dist]);
+
+        double weight = 1.0 / (1.0 + anchor.distance);
+        weights.add(weight);
       }
 
-      if (J.isEmpty) return null;
+      if (J.isEmpty) {
+        return null;
+      }
 
       double jtJ00 = 0, jtJ01 = 0, jtJ11 = 0;
-      for (var row in J) {
-        jtJ00 += row[0] * row[0];
-        jtJ01 += row[0] * row[1];
-        jtJ11 += row[1] * row[1];
+      for (int i = 0; i < J.length; i++) {
+        final w = weights[i];
+        jtJ00 += w * J[i][0] * J[i][0];
+        jtJ01 += w * J[i][0] * J[i][1];
+        jtJ11 += w * J[i][1] * J[i][1];
       }
 
       double jtr0 = 0, jtr1 = 0;
       for (int i = 0; i < J.length; i++) {
-        jtr0 += J[i][0] * r[i];
-        jtr1 += J[i][1] * r[i];
+        final w = weights[i];
+        jtr0 += w * J[i][0] * r[i];
+        jtr1 += w * J[i][1] * r[i];
       }
 
       double det = jtJ00 * jtJ11 - jtJ01 * jtJ01;
@@ -2472,8 +2698,8 @@ class Trilateration {
       double deltaX = -(inv00 * jtr0 + inv01 * jtr1);
       double deltaY = -(inv01 * jtr0 + inv11 * jtr1);
 
-      x += deltaX;
-      y += deltaY;
+      x = (x + deltaX).clamp(0.0, roomWidth);
+      y = (y + deltaY).clamp(0.0, roomHeight);
 
       double stepSize = math.sqrt(deltaX * deltaX + deltaY * deltaY);
       if (stepSize < convergenceThreshold) {
@@ -2484,51 +2710,90 @@ class Trilateration {
     return Offset(x, y);
   }
 
-  Offset? _fallbackCircleIntersection() {
-    if (anchors.length < 2) return null;
-
-    try {
-      double x1 = anchors[0].x, y1 = anchors[0].y, r1 = anchors[0].distance;
-      double x2 = anchors[1].x, y2 = anchors[1].y, r2 = anchors[1].distance;
-
-      double d = math.sqrt(math.pow(x2 - x1, 2) + math.pow(y2 - y1, 2));
-
-      if (d > r1 + r2 || d < (r1 - r2).abs() || d == 0) {
-        return Offset((x1 + x2) / 2, (y1 + y2) / 2);
-      }
-
-      double a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
-      double h = math.sqrt((r1 * r1 - a * a).abs());
-
-      double x0 = x1 + a * (x2 - x1) / d;
-      double y0 = y1 + a * (y2 - y1) / d;
-
-      double intersectionX1 = x0 + h * (y2 - y1) / d;
-      double intersectionY1 = y0 - h * (x2 - x1) / d;
-
-      return Offset(intersectionX1, intersectionY1);
-    } catch (e) {
-      return null;
+  double _getInitialX(List<Anchor> validAnchors) {
+    if (previousPosition != null) {
+      return previousPosition!.dx;
     }
+
+    double weightedSum = 0;
+    double totalWeight = 0;
+
+    for (var anchor in validAnchors) {
+      if (anchor.distance > 0) {
+        double weight = 1.0 / (1.0 + anchor.distance);
+        weightedSum += anchor.x * weight;
+        totalWeight += weight;
+      }
+    }
+
+    return totalWeight > 0
+        ? (weightedSum / totalWeight).clamp(0.0, roomWidth)
+        : roomWidth / 2;
   }
 
-  double _calculateRMSError(Offset position) {
-    double sumSquaredError = 0;
-    int count = 0;
+  double _getInitialY(List<Anchor> validAnchors) {
+    if (previousPosition != null) {
+      return previousPosition!.dy;
+    }
 
-    for (var anchor in anchors) {
-      if (anchor.distance <= 0) continue;
+    double weightedSum = 0;
+    double totalWeight = 0;
+
+    for (var anchor in validAnchors) {
+      if (anchor.distance > 0) {
+        double weight = 1.0 / (1.0 + anchor.distance);
+        weightedSum += anchor.y * weight;
+        totalWeight += weight;
+      }
+    }
+
+    return totalWeight > 0
+        ? (weightedSum / totalWeight).clamp(0.0, roomHeight)
+        : roomHeight / 2;
+  }
+
+  Offset _applyLightSmoothing(Offset newPos, Offset prevPos) {
+    final distance = math.sqrt(
+      math.pow(newPos.dx - prevPos.dx, 2) + math.pow(newPos.dy - prevPos.dy, 2),
+    );
+
+    double alpha;
+    if (distance < 0.05) {
+      alpha = 0.4;
+    } else if (distance < 0.15) {
+      alpha = 0.75;
+    } else {
+      alpha = 0.92;
+    }
+
+    return Offset(
+      prevPos.dx + alpha * (newPos.dx - prevPos.dx),
+      prevPos.dy + alpha * (newPos.dy - prevPos.dy),
+    );
+  }
+
+  double _calculateWeightedRMSE(Offset position, List<Anchor> validAnchors) {
+    double sumWeightedSquaredError = 0;
+    double totalWeight = 0;
+
+    for (var anchor in validAnchors) {
+      if (anchor.distance <= 0) {
+        continue;
+      }
 
       double dx = position.dx - anchor.x;
       double dy = position.dy - anchor.y;
       double calculatedDist = math.sqrt(dx * dx + dy * dy);
       double error = calculatedDist - anchor.distance;
 
-      sumSquaredError += error * error;
-      count++;
+      double weight = 1.0 / (1.0 + anchor.distance);
+      sumWeightedSquaredError += weight * error * error;
+      totalWeight += weight;
     }
 
-    if (count == 0) return 0;
-    return math.sqrt(sumSquaredError / count);
+    if (totalWeight == 0) {
+      return 0;
+    }
+    return math.sqrt(sumWeightedSquaredError / totalWeight);
   }
 }
