@@ -26,7 +26,7 @@ class MapView extends StatefulWidget {
 
 class _MapViewState extends State<MapView>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  final String _esp32IpAddress = "172.16.42.99";
+  final String _esp32IpAddress = "192.168.1.100";
   final String _targetCartId = "cart001";
   num baseConvertion = 100;
   double roomWidth = 7.5;
@@ -36,6 +36,9 @@ class _MapViewState extends State<MapView>
     {"id": "P001", "position": const Offset(1.0, 1.0)},
     {"id": "P002", "position": const Offset(2.0, 3.0)},
     {"id": "P003", "position": const Offset(4.0, 5.0)},
+    {"id": "P004", "position": const Offset(6.0, 2.0)},
+    {"id": "P005", "position": const Offset(3.0, 4.0)},
+    {"id": "P006", "position": const Offset(3.0, 5.0)},
   ];
 
   Map<String, dynamic>? geoJsonData;
@@ -45,6 +48,9 @@ class _MapViewState extends State<MapView>
   final Set<String> _hiddenProductPaths = {};
   String? _nearestProductId;
   bool _isFollowingTag = false;
+
+  String? _selectedProductId;
+  Offset? _selectedProductPosition;
 
   String get _wsUrl => 'ws://$_esp32IpAddress/ws';
   var links =
@@ -73,8 +79,14 @@ class _MapViewState extends State<MapView>
   late AnimationController _continuousAnimationController;
   Timer? _positionUpdateTimer;
 
+  late AnimationController _cameraAnimationController;
+  Animation<Matrix4>? _cameraAnimation;
+
   final TransformationController _transformationController =
       TransformationController();
+
+  Matrix4? _lastTransformValue;
+  Timer? _transformCheckTimer;
 
   Map<String, Offset> get anchorPositions => {
     "A0084": const Offset(0, 0),
@@ -82,6 +94,23 @@ class _MapViewState extends State<MapView>
     "A0086": Offset(0, roomHeight),
     "A0087": Offset(roomWidth, roomHeight),
   };
+
+  double? get _nearestProductDistance {
+    if (_nearestProductId == null || _currentTagPosition == null) {
+      return null;
+    }
+
+    final product = listOfProductsLocation.firstWhere(
+      (p) => p['id'] == _nearestProductId,
+      orElse: () => {'position': const Offset(0, 0)},
+    );
+
+    final productPosition = product['position'] as Offset;
+    return math.sqrt(
+      math.pow(_currentTagPosition!.dx - productPosition.dx, 2) +
+          math.pow(_currentTagPosition!.dy - productPosition.dy, 2),
+    );
+  }
 
   @override
   void initState() {
@@ -103,6 +132,14 @@ class _MapViewState extends State<MapView>
       vsync: this,
     );
 
+    _cameraAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    _transformationController.addListener(_onTransformChanged);
+    _startTransformMonitoring();
+
     _loadDefaultGeoJsonData();
     _connectWebSocket();
     _startHeartbeatMonitor();
@@ -114,6 +151,154 @@ class _MapViewState extends State<MapView>
         _setInitialZoom();
       }
     });
+  }
+
+  void _startTransformMonitoring() {
+    _transformCheckTimer?.cancel();
+    _transformCheckTimer = Timer.periodic(const Duration(milliseconds: 100), (
+      timer,
+    ) {
+      if (!mounted) {
+        return;
+      }
+      _checkForUserGesture();
+    });
+  }
+
+  void _onTransformChanged() {
+    if (_selectedProductId != null) {
+      setState(() {
+        _selectedProductId = null;
+        _selectedProductPosition = null;
+      });
+    }
+
+    if (!_isFollowingTag || _cameraAnimationController.isAnimating) {
+      return;
+    }
+
+    if (_lastTransformValue != null) {
+      final currentTransform = _transformationController.value;
+
+      if (!_areMatricesEqual(currentTransform, _lastTransformValue!)) {
+        if (kDebugMode) {
+          debugPrint('🔓 Auto-unlocking follow mode - user gesture detected');
+        }
+        setState(() {
+          _isFollowingTag = false;
+        });
+      }
+    }
+  }
+
+  bool _areMatricesEqual(Matrix4 a, Matrix4 b, {double tolerance = 0.01}) {
+    for (int i = 0; i < 16; i++) {
+      if ((a.storage[i] - b.storage[i]).abs() > tolerance) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _checkForUserGesture() {
+    if (_isFollowingTag && !_cameraAnimationController.isAnimating) {
+      _lastTransformValue = _transformationController.value.clone();
+    }
+  }
+
+  void _handleCanvasTap(Offset screenPosition) {
+    final transform = _transformationController.value;
+
+    final inverseTransform = Matrix4.inverted(transform);
+    final transformedPosition = MatrixUtils.transformPoint(
+      inverseTransform,
+      screenPosition,
+    );
+
+    if (kDebugMode) {
+      debugPrint('🖱️ Screen tap: $screenPosition');
+      debugPrint('📍 Canvas position: $transformedPosition');
+    }
+
+    for (var product in listOfProductsLocation) {
+      final productId = product['id'] as String;
+      final productPosition = product['position'] as Offset;
+
+      final productCanvasX =
+          metersToPixels(
+            productPosition.dx,
+            baseConvertion: baseConvertion.toInt(),
+          ) +
+          50;
+      final productCanvasY =
+          metersToPixels(
+            roomHeight - productPosition.dy,
+            baseConvertion: baseConvertion.toInt(),
+          ) +
+          50;
+
+      final distance = math.sqrt(
+        math.pow(transformedPosition.dx - productCanvasX, 2) +
+            math.pow(transformedPosition.dy - productCanvasY, 2),
+      );
+
+      if (kDebugMode) {
+        debugPrint(
+          '📏 Distance to $productId: ${distance.toStringAsFixed(2)}px',
+        );
+      }
+
+      if (distance < 30) {
+        _handleProductTap(productId, productPosition);
+        return;
+      }
+    }
+
+    if (_selectedProductId != null) {
+      setState(() {
+        _selectedProductId = null;
+        _selectedProductPosition = null;
+      });
+    }
+  }
+
+  void _handleProductTap(String productId, Offset position) {
+    setState(() {
+      if (_selectedProductId == productId) {
+        _selectedProductId = null;
+        _selectedProductPosition = null;
+      } else {
+        _selectedProductId = productId;
+        _selectedProductPosition = position;
+      }
+    });
+
+    if (kDebugMode) {
+      debugPrint('✅ Product selected: $productId at $position');
+    }
+  }
+
+  Offset _getScreenPosition(Offset meterPosition) {
+    final canvasX =
+        metersToPixels(
+          meterPosition.dx,
+          baseConvertion: baseConvertion.toInt(),
+        ) +
+        50;
+    final canvasY =
+        metersToPixels(
+          roomHeight - meterPosition.dy,
+          baseConvertion: baseConvertion.toInt(),
+        ) +
+        50;
+
+    final transform = _transformationController.value;
+    final transformedX =
+        transform.entry(0, 0) * canvasX + transform.entry(0, 3);
+    final transformedY =
+        transform.entry(1, 1) * canvasY + transform.entry(1, 3);
+
+    return Offset(transformedX, transformedY);
   }
 
   void _startContinuousPositionUpdate() {
@@ -141,8 +326,8 @@ class _MapViewState extends State<MapView>
             );
           });
 
-          if (_isFollowingTag) {
-            _centerOnTag();
+          if (_isFollowingTag && !_cameraAnimationController.isAnimating) {
+            _centerOnTagSmooth(animate: false);
           }
         }
       }
@@ -238,7 +423,7 @@ class _MapViewState extends State<MapView>
           "snapToGrid": true,
           "gridSize": 1.0
         },
-        "timestamp": "2025-11-25T19:02:25.988584",
+        "timestamp": "2025-11-26T20:19:40.602204",
         "createdWith": "Indoor Map Creator v1.0"
       },
       "geometry": null
@@ -312,7 +497,7 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Room 5",
+        "name": "Room 5 (copy)",
         "amenity": "room",
         "building:part": "room"
       },
@@ -320,11 +505,11 @@ class _MapViewState extends State<MapView>
         "type": "Polygon",
         "coordinates": [
           [
-            [3.9216321387220905, 43.60671291085721],
-            [3.9216569508079746, 43.60671291085721],
-            [3.9216569508079746, 43.60672189396896],
-            [3.9216321387220905, 43.60672189396896],
-            [3.9216321387220905, 43.60671291085721]
+            [3.9216335440941426, 43.60670076962023],
+            [3.9216583561800267, 43.60670076962023],
+            [3.9216583561800267, 43.606704812020524],
+            [3.9216335440941426, 43.606704812020524],
+            [3.9216335440941426, 43.60670076962023]
           ]
         ]
       }
@@ -334,21 +519,7 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Circle 6",
-        "amenity": "area",
-        "radius": "0.5"
-      },
-      "geometry": {
-        "type": "Point",
-        "coordinates": [3.9216714988317687, 43.6067200833105]
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "indoor": "yes",
-        "level": "0",
-        "name": "Room 7",
+        "name": "Room 5 (copy) (copy)",
         "amenity": "room",
         "building:part": "room"
       },
@@ -356,12 +527,11 @@ class _MapViewState extends State<MapView>
         "type": "Polygon",
         "coordinates": [
           [
-            [3.9216466867458846, 43.606702117086996],
-            [3.9216466867458846, 43.60669313397525],
-            [3.9216590927888264, 43.60669313397525],
-            [3.9216590927888264, 43.606702117086996],
-            [3.9216466867458846, 43.606702117086996],
-            [3.9216466867458846, 43.606702117086996]
+            [3.9216343291640476, 43.60668763883736],
+            [3.9216591412499318, 43.60668763883736],
+            [3.9216591412499318, 43.60669168123764],
+            [3.9216343291640476, 43.60669168123764],
+            [3.9216343291640476, 43.60668763883736]
           ]
         ]
       }
@@ -371,19 +541,19 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Door 8",
-        "amenity": "entrance",
-        "door": "yes"
+        "name": "Room 5 (copy) (copy) (copy)",
+        "amenity": "room",
+        "building:part": "room"
       },
       "geometry": {
         "type": "Polygon",
         "coordinates": [
           [
-            [3.921628077681471, 43.60666573548441],
-            [3.9216404837244134, 43.60666573548441],
-            [3.9216404837244134, 43.606666633795584],
-            [3.921628077681471, 43.606666633795584],
-            [3.921628077681471, 43.60666573548441]
+            [3.921634038397416, 43.606675167751746],
+            [3.9216588504833005, 43.606675167751746],
+            [3.9216588504833005, 43.60667921015204],
+            [3.921634038397416, 43.60667921015204],
+            [3.921634038397416, 43.606675167751746]
           ]
         ]
       }
@@ -393,19 +563,19 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Window 9",
-        "amenity": "window",
-        "building:part": "window"
+        "name": "Room 5 (copy) (copy) (copy) (copy)",
+        "amenity": "room",
+        "building:part": "room"
       },
       "geometry": {
         "type": "Polygon",
         "coordinates": [
           [
-            [3.921662194299562, 43.60666573548441],
-            [3.921680803363975, 43.60666573548441],
-            [3.921680803363975, 43.606666633795584],
-            [3.921662194299562, 43.606666633795584],
-            [3.921662194299562, 43.60666573548441]
+            [3.9216776727765765, 43.60670133106472],
+            [3.921702484862461, 43.60670133106472],
+            [3.921702484862461, 43.606705373465005],
+            [3.9216776727765765, 43.606705373465005],
+            [3.9216776727765765, 43.60670133106472]
           ]
         ]
       }
@@ -415,18 +585,19 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Stairs 10",
-        "amenity": "stairs"
+        "name": "Room 5 (copy)",
+        "amenity": "room",
+        "building:part": "room"
       },
       "geometry": {
         "type": "Polygon",
         "coordinates": [
           [
-            [3.9216882082208566, 43.60666633903723],
-            [3.9217130203067407, 43.60666633903723],
-            [3.9217130203067407, 43.60667981370486],
-            [3.9216882082208566, 43.60667981370486],
-            [3.9216882082208566, 43.60666633903723]
+            [3.9216778860054395, 43.60668768094569],
+            [3.921702698091324, 43.60668768094569],
+            [3.921702698091324, 43.60669172334598],
+            [3.9216778860054395, 43.60669172334598],
+            [3.9216778860054395, 43.60668768094569]
           ]
         ]
       }
@@ -436,12 +607,21 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Label 11",
-        "description": "Label"
+        "name": "Room 5 (copy) (copy)",
+        "amenity": "room",
+        "building:part": "room"
       },
       "geometry": {
-        "type": "Point",
-        "coordinates": [3.921683904874711, 43.606702117086996]
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [3.9216780798498605, 43.60667562392539],
+            [3.921702891935745, 43.60667562392539],
+            [3.921702891935745, 43.60667966632568],
+            [3.9216780798498605, 43.60667966632568],
+            [3.9216780798498605, 43.60667562392539]
+          ]
+        ]
       }
     },
     {
@@ -449,19 +629,42 @@ class _MapViewState extends State<MapView>
       "properties": {
         "indoor": "yes",
         "level": "0",
-        "name": "Path 12",
-        "highway": "footway"
+        "name": "Room 5 (copy)",
+        "amenity": "room",
+        "building:part": "room"
       },
       "geometry": {
-        "type": "LineString",
+        "type": "Polygon",
         "coordinates": [
-          [3.9216714988317687, 43.606675167751746],
-          [3.9216714988317687, 43.606711100198744],
-          [3.9216342807029423, 43.606711100198744],
-          [3.921708716960595, 43.606711100198744],
-          [3.921708716960595, 43.6066841508635],
-          [3.9216342807029423, 43.6066841508635],
-          [3.9216342807029423, 43.606711100198744]
+          [
+            [3.9216335344019213, 43.60671475660595],
+            [3.921658346487806, 43.60671475660595],
+            [3.921658346487806, 43.60671879900624],
+            [3.9216335344019213, 43.60671879900624],
+            [3.9216335344019213, 43.60671475660595]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "indoor": "yes",
+        "level": "0",
+        "name": "Room 5 (copy) (copy)",
+        "amenity": "room",
+        "building:part": "room"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [3.921677508008819, 43.606715065400415],
+            [3.921702320094703, 43.606715065400415],
+            [3.921702320094703, 43.60671910780071],
+            [3.921677508008819, 43.60671910780071],
+            [3.921677508008819, 43.606715065400415]
+          ]
         ]
       }
     }
@@ -563,7 +766,9 @@ class _MapViewState extends State<MapView>
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -596,8 +801,10 @@ class _MapViewState extends State<MapView>
     }
   }
 
-  void _centerOnTag() {
-    if (_currentTagPosition == null) return;
+  void _centerOnTagSmooth({bool animate = true}) {
+    if (_currentTagPosition == null) {
+      return;
+    }
 
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -620,11 +827,39 @@ class _MapViewState extends State<MapView>
     final offsetX = screenWidth / 2 - (tagCanvasX * targetScale);
     final offsetY = screenHeight / 2 - (tagCanvasY * targetScale);
 
-    final newMatrix = Matrix4.identity()
+    final targetMatrix = Matrix4.identity()
       ..translate(offsetX, offsetY)
       ..scale(targetScale);
 
-    _transformationController.value = newMatrix;
+    if (animate) {
+      final currentMatrix = _transformationController.value;
+
+      _cameraAnimation = Matrix4Tween(begin: currentMatrix, end: targetMatrix)
+          .animate(
+            CurvedAnimation(
+              parent: _cameraAnimationController,
+              curve: Curves.easeInOutCubic,
+            ),
+          );
+
+      _cameraAnimationController.forward(from: 0.0).then((_) {
+        if (mounted) {
+          _transformationController.value = targetMatrix;
+          _lastTransformValue = targetMatrix.clone();
+        }
+      });
+
+      _cameraAnimation!.addListener(_updateCameraTransform);
+    } else {
+      _transformationController.value = targetMatrix;
+      _lastTransformValue = targetMatrix.clone();
+    }
+  }
+
+  void _updateCameraTransform() {
+    if (_cameraAnimation != null && mounted) {
+      _transformationController.value = _cameraAnimation!.value;
+    }
   }
 
   void _toggleFollowMode() {
@@ -633,7 +868,7 @@ class _MapViewState extends State<MapView>
     });
 
     if (_isFollowingTag) {
-      _centerOnTag();
+      _centerOnTagSmooth(animate: true);
       if (kDebugMode) {
         debugPrint('✅ Follow mode enabled');
       }
@@ -644,8 +879,37 @@ class _MapViewState extends State<MapView>
     }
   }
 
+  void _toggleNearestPathVisibility() {
+    if (_nearestProductId == null) {
+      _showSnackBar('No nearest product found', isError: true);
+      if (kDebugMode) {
+        debugPrint('⚠️ No nearest product to exclude/whitelist');
+      }
+      return;
+    }
+
+    setState(() {
+      if (_hiddenProductPaths.contains(_nearestProductId)) {
+        _hiddenProductPaths.remove(_nearestProductId);
+        _showSnackBar('✅ Showing path to $_nearestProductId');
+        if (kDebugMode) {
+          debugPrint('✅ Whitelisted path to $_nearestProductId');
+        }
+      } else {
+        _hiddenProductPaths.add(_nearestProductId!);
+        _showSnackBar('❌ Hidden path to $_nearestProductId');
+        if (kDebugMode) {
+          debugPrint('❌ Excluded path to $_nearestProductId');
+        }
+      }
+      _updateNearestProduct();
+    });
+  }
+
   void _computePathsFromTag() {
-    if (_currentTagPosition == null || geoJsonData == null) return;
+    if (_currentTagPosition == null || geoJsonData == null) {
+      return;
+    }
 
     if (_lastPathComputePosition != null) {
       final distance = math.sqrt(
@@ -699,7 +963,9 @@ class _MapViewState extends State<MapView>
   }
 
   void _updateNearestProduct() {
-    if (_currentTagPosition == null) return;
+    if (_currentTagPosition == null) {
+      return;
+    }
 
     String? nearestId;
     double nearestDistance = double.infinity;
@@ -728,69 +994,18 @@ class _MapViewState extends State<MapView>
     });
   }
 
-  void _handleProductTap(Offset tapPosition) {
-    final matrix = _transformationController.value;
-
-    final inverseMatrix = Matrix4.inverted(matrix);
-    final transformedPoint = MatrixUtils.transformPoint(
-      inverseMatrix,
-      tapPosition,
-    );
-
-    final metersX = pixelsToMeters(
-      transformedPoint.dx - 50,
-      baseConvertion: baseConvertion.toDouble(),
-    );
-    final metersY =
-        roomHeight -
-        pixelsToMeters(
-          transformedPoint.dy - 50,
-          baseConvertion: baseConvertion.toDouble(),
-        );
-
-    if (kDebugMode) {
-      debugPrint(
-        '👆 Tap at canvas: (${metersX.toStringAsFixed(2)}, ${metersY.toStringAsFixed(2)})',
-      );
-    }
-
-    for (var product in listOfProductsLocation) {
-      final productId = product['id'] as String;
-      final productPos = product['position'] as Offset;
-
-      final distance = math.sqrt(
-        math.pow(metersX - productPos.dx, 2) +
-            math.pow(metersY - productPos.dy, 2),
-      );
-
-      if (distance < 0.3) {
-        setState(() {
-          if (_hiddenProductPaths.contains(productId)) {
-            _hiddenProductPaths.remove(productId);
-            if (kDebugMode) {
-              debugPrint('✅ Showing path to $productId');
-            }
-          } else {
-            _hiddenProductPaths.add(productId);
-            if (kDebugMode) {
-              debugPrint('❌ Hiding path to $productId');
-            }
-          }
-          _updateNearestProduct();
-        });
-        return;
-      }
-    }
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _positionUpdateTimer?.cancel();
+    _transformCheckTimer?.cancel();
+    _transformationController.removeListener(_onTransformChanged);
     _cleanup();
     _animationController.dispose();
     _arrowAnimationController.dispose();
     _continuousAnimationController.dispose();
+    _cameraAnimationController.dispose();
+    _cameraAnimation?.removeListener(_updateCameraTransform);
     _transformationController.dispose();
     super.dispose();
   }
@@ -1177,7 +1392,7 @@ class _MapViewState extends State<MapView>
       if (_isFollowingTag) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            _centerOnTag();
+            _centerOnTagSmooth(animate: true);
           }
         });
       }
@@ -1209,9 +1424,9 @@ class _MapViewState extends State<MapView>
       backgroundColor: const Color(0xFFF5F5F5),
       body: Stack(
         children: [
-          GestureDetector(
-            onTapDown: (details) {
-              _handleProductTap(details.localPosition);
+          Listener(
+            onPointerDown: (details) {
+              _handleCanvasTap(details.localPosition);
             },
             child: AnimatedBuilder(
               animation: _arrowAnimationController,
@@ -1222,8 +1437,8 @@ class _MapViewState extends State<MapView>
                   maxScale: 4.0,
                   boundaryMargin: const EdgeInsets.all(double.infinity),
                   constrained: false,
-                  panEnabled: !_isFollowingTag,
-                  scaleEnabled: !_isFollowingTag,
+                  panEnabled: true,
+                  scaleEnabled: true,
                   child: RepaintBoundary(
                     child: CustomPaint(
                       painter: StaticMapCanvas(
@@ -1291,6 +1506,147 @@ class _MapViewState extends State<MapView>
             ),
           ),
 
+          if (_nearestProductId != null &&
+              !_hiddenProductPaths.contains(_nearestProductId))
+            Positioned(
+              top: 16,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(28),
+                  shadowColor: Colors.black26,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF06b6d4), Color(0xFF0891b2)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.navigation,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Heading to',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _nearestProductId!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_nearestProductDistance != null) ...[
+                          const SizedBox(width: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_nearestProductDistance!.toStringAsFixed(1)}m',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // ✅ SIMPLIFIED: Normal rounded container callout
+          if (_selectedProductId != null && _selectedProductPosition != null)
+            Builder(
+              builder: (context) {
+                final screenPos = _getScreenPosition(_selectedProductPosition!);
+                return ProductCallout(
+                  productId: _selectedProductId!,
+                  position: screenPos,
+                  onClose: () {
+                    setState(() {
+                      _selectedProductId = null;
+                      _selectedProductPosition = null;
+                    });
+                  },
+                );
+              },
+            ),
+
+          Positioned(
+            bottom: 24,
+            left: 24,
+            child: Material(
+              elevation: 12,
+              borderRadius: BorderRadius.circular(56),
+              shadowColor: Colors.black38,
+              child: InkWell(
+                onTap: _toggleNearestPathVisibility,
+                borderRadius: BorderRadius.circular(56),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors:
+                          _nearestProductId != null &&
+                              _hiddenProductPaths.contains(_nearestProductId)
+                          ? [const Color(0xFFef4444), const Color(0xFFdc2626)]
+                          : [const Color(0xFF10b981), const Color(0xFF059669)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(56),
+                  ),
+                  child: Icon(
+                    _nearestProductId != null &&
+                            _hiddenProductPaths.contains(_nearestProductId)
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           Positioned(
             bottom: 24,
             right: 24,
@@ -1326,9 +1682,9 @@ class _MapViewState extends State<MapView>
 
           if (_isFollowingTag)
             Positioned(
-              top: 16,
-              left: 0,
+              bottom: 100,
               right: 0,
+              left: 0,
               child: Center(
                 child: Material(
                   elevation: 4,
@@ -1359,6 +1715,117 @@ class _MapViewState extends State<MapView>
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+// ✅ SIMPLIFIED: Normal rounded container callout (no CustomPainter)
+class ProductCallout extends StatelessWidget {
+  final String productId;
+  final Offset position;
+  final VoidCallback onClose;
+
+  const ProductCallout({
+    super.key,
+    required this.productId,
+    required this.position,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: position.dx - 75,
+      top: position.dy + 35,
+      child: GestureDetector(
+        onTap: () {},
+        child: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(16),
+          shadowColor: Colors.black26,
+          child: Container(
+            width: 150,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFe5e7eb), width: 2),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3b82f6).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.inventory_2,
+                        color: Color(0xFF3b82f6),
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        productId,
+                        style: const TextStyle(
+                          color: Color(0xFF1f2937),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Product Details',
+                  style: TextStyle(
+                    color: Color(0xFF6b7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10b981).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.check_circle,
+                        color: Color(0xFF10b981),
+                        size: 14,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'In Stock',
+                        style: TextStyle(
+                          color: Color(0xFF10b981),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
