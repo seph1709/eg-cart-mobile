@@ -2,11 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:auto_route/auto_route.dart';
+import 'package:bottom_bar_with_sheet/bottom_bar_with_sheet.dart';
+import 'package:egcart_mobile/models/product_model.dart';
+import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
+
+import 'widgets/product_card_widget.dart';
 
 double metersToPixels(double meters, {int baseConvertion = 100}) {
   return (meters * baseConvertion).toDouble();
@@ -28,21 +32,14 @@ class _MapViewState extends State<MapView>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   final String _esp32IpAddress = "192.168.1.100";
   final String _targetCartId = "cart001";
+  final _bottomWithSheelController = BottomBarWithSheetController(
+    initialIndex: 0,
+  );
   num baseConvertion = 100;
   double roomWidth = 7.5;
   double roomHeight = 7.0;
 
-  List<Map<String, dynamic>> listOfProductsLocation = [
-    {"id": "P001", "position": const Offset(1.0, 1.0)},
-    {"id": "P002", "position": const Offset(2.0, 3.0)},
-    {"id": "P003", "position": const Offset(4.0, 5.0)},
-    {"id": "P004", "position": const Offset(6.0, 2.0)},
-    {"id": "P005", "position": const Offset(3.0, 4.0)},
-    {"id": "P006", "position": const Offset(3.0, 5.0)},
-  ];
-
   Map<String, dynamic>? geoJsonData;
-  String? _loadedFileName;
   Map<String, List<Offset>> _computedPaths = {};
   Offset? _lastPathComputePosition;
   final Set<String> _hiddenProductPaths = {};
@@ -51,6 +48,8 @@ class _MapViewState extends State<MapView>
 
   String? _selectedProductId;
   Offset? _selectedProductPosition;
+
+  String? _prioritizedProductId;
 
   String get _wsUrl => 'ws://$_esp32IpAddress/ws';
   var links =
@@ -95,17 +94,26 @@ class _MapViewState extends State<MapView>
     "A0087": Offset(roomWidth, roomHeight),
   };
 
+  String? get _displayedProductId {
+    if (_prioritizedProductId != null &&
+        !_hiddenProductPaths.contains(_prioritizedProductId)) {
+      return _prioritizedProductId;
+    }
+    return _nearestProductId;
+  }
+
   double? get _nearestProductDistance {
-    if (_nearestProductId == null || _currentTagPosition == null) {
+    final targetId = _displayedProductId;
+    if (targetId == null || _currentTagPosition == null) {
       return null;
     }
 
-    final product = listOfProductsLocation.firstWhere(
-      (p) => p['id'] == _nearestProductId,
-      orElse: () => {'position': const Offset(0, 0)},
-    );
+    final product = CartProducts.products.firstWhere((p) => p.id == targetId);
 
-    final productPosition = product['position'] as Offset;
+    final x = product.coordinates['x'] ?? 0.0;
+    final y = product.coordinates['y'] ?? 0.0;
+
+    final productPosition = Offset(x, y);
     return math.sqrt(
       math.pow(_currentTagPosition!.dx - productPosition.dx, 2) +
           math.pow(_currentTagPosition!.dy - productPosition.dy, 2),
@@ -149,6 +157,7 @@ class _MapViewState extends State<MapView>
       if (mounted) {
         _processPositionUpdate(links);
         _setInitialZoom();
+        _toggleFollowMode();
       }
     });
   }
@@ -220,9 +229,11 @@ class _MapViewState extends State<MapView>
       debugPrint('📍 Canvas position: $transformedPosition');
     }
 
-    for (var product in listOfProductsLocation) {
-      final productId = product['id'] as String;
-      final productPosition = product['position'] as Offset;
+    for (var product in CartProducts.products) {
+      final productId = product.id;
+      final x = product.coordinates['x'] ?? 0.0;
+      final y = product.coordinates['y'] ?? 0.0;
+      final productPosition = Offset(x, y);
 
       final productCanvasX =
           metersToPixels(
@@ -276,6 +287,32 @@ class _MapViewState extends State<MapView>
     if (kDebugMode) {
       debugPrint('✅ Product selected: $productId at $position');
     }
+  }
+
+  void _handleProductListTap(String productId) {
+    setState(() {
+      if (_hiddenProductPaths.contains(productId)) {
+        _hiddenProductPaths.remove(productId);
+        _prioritizedProductId = productId;
+        // _showSnackBar('✅ Restored path to $productId');
+        if (kDebugMode) {
+          debugPrint('🔄 Restored and prioritized: $productId');
+        }
+      } else {
+        if (_prioritizedProductId == productId) {
+          _prioritizedProductId = null;
+          if (kDebugMode) {
+            debugPrint('❌ Deprioritized: $productId');
+          }
+        } else {
+          _prioritizedProductId = productId;
+          if (kDebugMode) {
+            debugPrint('🎯 Prioritized product: $productId');
+          }
+        }
+      }
+      _updateNearestProduct();
+    });
   }
 
   Offset _getScreenPosition(Offset meterPosition) {
@@ -332,65 +369,6 @@ class _MapViewState extends State<MapView>
         }
       }
     });
-  }
-
-  Future<bool> _requestStoragePermission() async {
-    if (kIsWeb) {
-      return true;
-    }
-
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      final androidInfo = await _getAndroidVersion();
-      if (androidInfo >= 33) {
-        return true;
-      }
-
-      var status = await Permission.storage.status;
-
-      if (status.isDenied) {
-        status = await Permission.storage.request();
-      }
-
-      if (status.isPermanentlyDenied) {
-        if (mounted) {
-          _showPermissionDialog();
-        }
-        return false;
-      }
-
-      return status.isGranted;
-    }
-
-    return true;
-  }
-
-  Future<int> _getAndroidVersion() async {
-    return 33;
-  }
-
-  void _showPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Storage Permission Required'),
-        content: const Text(
-          'This app needs storage permission to access files. Please grant the permission in app settings.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              openAppSettings();
-            },
-            child: const Text('Open Settings'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _loadDefaultGeoJsonData() {
@@ -673,7 +651,6 @@ class _MapViewState extends State<MapView>
 ''';
 
     _parseGeoJsonString(geoJsonString);
-    _loadedFileName = 'Default Map';
   }
 
   void _parseGeoJsonString(String geoJsonString) {
@@ -711,72 +688,8 @@ class _MapViewState extends State<MapView>
       if (kDebugMode) {
         debugPrint('❌ Failed to parse GeoJSON: $e');
       }
-      _showSnackBar('Failed to parse GeoJSON file', isError: true);
+      // _showSnackBar('Failed to parse GeoJSON file', isError: true);
     }
-  }
-
-  Future<void> _pickGeoJsonFile() async {
-    try {
-      final hasPermission = await _requestStoragePermission();
-
-      if (!hasPermission) {
-        _showSnackBar('Storage permission denied', isError: true);
-        if (kDebugMode) {
-          debugPrint('⚠️ Storage permission denied');
-        }
-        return;
-      }
-
-      if (kDebugMode) {
-        debugPrint('✅ Storage permission granted');
-      }
-
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json', 'geojson'],
-        withData: true,
-      );
-
-      if (result != null && result.files.single.bytes != null) {
-        final bytes = result.files.single.bytes!;
-        final geoJsonString = utf8.decode(bytes);
-
-        _parseGeoJsonString(geoJsonString);
-
-        setState(() {
-          _loadedFileName = result.files.single.name;
-        });
-
-        _showSnackBar('✅ Loaded: ${result.files.single.name}');
-
-        if (kDebugMode) {
-          debugPrint('✅ GeoJSON file loaded: ${result.files.single.name}');
-        }
-      } else {
-        if (kDebugMode) {
-          debugPrint('⚠️ File picker cancelled');
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('❌ Error picking file: $e');
-      }
-      _showSnackBar('Failed to load file', isError: true);
-    }
-  }
-
-  void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) {
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   void _setInitialZoom() {
@@ -822,7 +735,7 @@ class _MapViewState extends State<MapView>
         ) +
         50;
 
-    final targetScale = 1.5;
+    final targetScale = 1.0;
 
     final offsetX = screenWidth / 2 - (tagCanvasX * targetScale);
     final offsetY = screenHeight / 2 - (tagCanvasY * targetScale);
@@ -880,26 +793,34 @@ class _MapViewState extends State<MapView>
   }
 
   void _toggleNearestPathVisibility() {
-    if (_nearestProductId == null) {
-      _showSnackBar('No nearest product found', isError: true);
+    final targetProductId = _prioritizedProductId ?? _nearestProductId;
+
+    if (targetProductId == null) {
+      // _showSnackBar('No product found', isError: true);
       if (kDebugMode) {
-        debugPrint('⚠️ No nearest product to exclude/whitelist');
+        debugPrint('⚠️ No product to exclude/whitelist');
       }
       return;
     }
 
     setState(() {
-      if (_hiddenProductPaths.contains(_nearestProductId)) {
-        _hiddenProductPaths.remove(_nearestProductId);
-        _showSnackBar('✅ Showing path to $_nearestProductId');
+      if (_hiddenProductPaths.contains(targetProductId)) {
+        _hiddenProductPaths.remove(targetProductId);
         if (kDebugMode) {
-          debugPrint('✅ Whitelisted path to $_nearestProductId');
+          debugPrint('✅ Whitelisted path to $targetProductId');
         }
       } else {
-        _hiddenProductPaths.add(_nearestProductId!);
-        _showSnackBar('❌ Hidden path to $_nearestProductId');
+        _hiddenProductPaths.add(targetProductId);
         if (kDebugMode) {
-          debugPrint('❌ Excluded path to $_nearestProductId');
+          debugPrint('❌ Excluded path to $targetProductId');
+        }
+
+        if (targetProductId == _prioritizedProductId) {
+          if (kDebugMode) {
+            debugPrint(
+              '🎯 Prioritized product excluded, auto-switching to nearest',
+            );
+          }
         }
       }
       _updateNearestProduct();
@@ -938,9 +859,11 @@ class _MapViewState extends State<MapView>
 
     final newPaths = <String, List<Offset>>{};
 
-    for (var product in listOfProductsLocation) {
-      final productId = product['id'] as String;
-      final productPosition = product['position'] as Offset;
+    for (var product in CartProducts.products) {
+      final productId = product.id;
+      final x = product.coordinates['x'] ?? 0.0;
+      final y = product.coordinates['y'] ?? 0.0;
+      final productPosition = Offset(x, y);
 
       final path = pathfinder.findPath(_currentTagPosition!, productPosition);
 
@@ -970,14 +893,16 @@ class _MapViewState extends State<MapView>
     String? nearestId;
     double nearestDistance = double.infinity;
 
-    for (var product in listOfProductsLocation) {
-      final productId = product['id'] as String;
+    for (var product in CartProducts.products) {
+      final productId = product.id;
+      final x = product.coordinates['x'] ?? 0.0;
+      final y = product.coordinates['y'] ?? 0.0;
+      final productPosition = Offset(x, y);
 
       if (_hiddenProductPaths.contains(productId)) {
         continue;
       }
 
-      final productPosition = product['position'] as Offset;
       final distance = math.sqrt(
         math.pow(_currentTagPosition!.dx - productPosition.dx, 2) +
             math.pow(_currentTagPosition!.dy - productPosition.dy, 2),
@@ -1422,305 +1347,330 @@ class _MapViewState extends State<MapView>
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      body: Stack(
-        children: [
-          Listener(
-            onPointerDown: (details) {
-              _handleCanvasTap(details.localPosition);
-            },
-            child: AnimatedBuilder(
-              animation: _arrowAnimationController,
-              builder: (context, child) {
-                return InteractiveViewer(
-                  transformationController: _transformationController,
-                  minScale: 0.3,
-                  maxScale: 4.0,
-                  boundaryMargin: const EdgeInsets.all(double.infinity),
-                  constrained: false,
-                  panEnabled: true,
-                  scaleEnabled: true,
-                  child: RepaintBoundary(
-                    child: CustomPaint(
-                      painter: StaticMapCanvas(
-                        roomWidth: roomWidth,
-                        roomHeight: roomHeight,
-                        baseConvertion: baseConvertion,
-                        tagPosition: _currentTagPosition,
-                        tagAccuracy: _currentAccuracy,
-                        productsLocation: listOfProductsLocation,
-                        geoJsonData: geoJsonData,
-                        computedPaths: _computedPaths,
-                        hiddenProductPaths: _hiddenProductPaths,
-                        nearestProductId: _nearestProductId,
-                        animationValue: _arrowAnimationController.value,
-                      ),
-                      size: Size(canvasWidth, canvasHeight),
-                    ),
-                  ),
-                );
-              },
+      bottomNavigationBar: BottomBarWithSheet(
+        disableMainActionButton: true,
+        onSelectItem: (index) {
+          if (index == 1) {
+            context.pushRoute(const CartView());
+          } else {
+            _bottomWithSheelController.toggleSheet();
+          }
+        },
+        controller: _bottomWithSheelController,
+        bottomBarTheme: const BottomBarTheme(
+          contentPadding: EdgeInsets.only(top: 10),
+          selectedItemIconColor: Colors.white,
+          heightClosed: 50,
+          itemIconSize: 27,
+          selectedItemIconSize: 27,
+          decoration: BoxDecoration(
+            color: Colors.green,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(25),
+              topRight: Radius.circular(25),
             ),
           ),
-
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Material(
-              elevation: 8,
-              borderRadius: BorderRadius.circular(16),
-              shadowColor: Colors.black26,
-              child: InkWell(
-                onTap: _pickGeoJsonFile,
-                borderRadius: BorderRadius.circular(16),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.map, color: Colors.white, size: 22),
-                      const SizedBox(width: 10),
-                      Text(
-                        _loadedFileName ?? 'Load Map',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
-                  ),
+          itemIconColor: Colors.white,
+        ),
+        items: const [
+          BottomBarWithSheetItem(icon: FontAwesomeIcons.anglesUp),
+          BottomBarWithSheetItem(icon: Icons.shopping_cart),
+        ],
+        sheetChild: Container(
+          decoration: const BoxDecoration(
+            // color: Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(25),
+              topRight: Radius.circular(25),
+            ),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 16),
+              const Text(
+                'Products',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
               ),
-            ),
-          ),
-
-          if (_nearestProductId != null &&
-              !_hiddenProductPaths.contains(_nearestProductId))
-            Positioned(
-              top: 16,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Material(
-                  elevation: 8,
-                  borderRadius: BorderRadius.circular(28),
-                  shadowColor: Colors.black26,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF06b6d4), Color(0xFF0891b2)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.navigation,
-                          color: Colors.white,
-                          size: 20,
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: CartProducts.products.length,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  itemBuilder: (context, index) {
+                    if (CartProducts.products.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return GestureDetector(
+                      onTap: () {
+                        _handleProductListTap(CartProducts.products[index].id);
+                      },
+                      child: GridView.builder(
+                        shrinkWrap: true,
+                        physics: NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 25,
+                          mainAxisSpacing: 30,
+                          childAspectRatio: 0.8,
                         ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              'Heading to',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
+                        itemCount: 4,
+                        itemBuilder: (context, index) {
+                          // return Text("");
+
+                          //make the cart products unique by filtering duplicates using id
+
+                          CartProducts.products = CartProducts.products
+                              .toSet()
+                              .toList();
+
+                          try {
+                            final currenProduct = CartProducts.products[index];
+                            return buildProductCard(currenProduct);
+                          } catch (e) {
+                            return const SizedBox.shrink();
+                          }
+                        },
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Listener(
+              onPointerDown: (details) {
+                _handleCanvasTap(details.localPosition);
+              },
+              child: AnimatedBuilder(
+                animation: _arrowAnimationController,
+                builder: (context, child) {
+                  return InteractiveViewer(
+                    transformationController: _transformationController,
+                    minScale: 0.3,
+                    maxScale: 4.0,
+                    boundaryMargin: const EdgeInsets.all(double.infinity),
+                    constrained: false,
+                    panEnabled: true,
+                    scaleEnabled: true,
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: StaticMapCanvas(
+                          roomWidth: roomWidth,
+                          roomHeight: roomHeight,
+                          baseConvertion: baseConvertion,
+                          tagPosition: _currentTagPosition,
+                          tagAccuracy: _currentAccuracy,
+                          productsLocation: CartProducts.products,
+                          geoJsonData: geoJsonData,
+                          computedPaths: _computedPaths,
+                          hiddenProductPaths: _hiddenProductPaths,
+                          nearestProductId: _displayedProductId,
+                          animationValue: _arrowAnimationController.value,
+                        ),
+                        size: Size(canvasWidth, canvasHeight),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (_displayedProductId != null &&
+                !_hiddenProductPaths.contains(_displayedProductId))
+              Positioned(
+                top: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Material(
+                    elevation: 8,
+                    borderRadius: BorderRadius.circular(28),
+                    shadowColor: Colors.black26,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors:
+                              _prioritizedProductId != null &&
+                                  !_hiddenProductPaths.contains(
+                                    _prioritizedProductId,
+                                  )
+                              ? [
+                                  const Color(0xFF10b981),
+                                  const Color(0xFF059669),
+                                ]
+                              : [
+                                  const Color(0xFF06b6d4),
+                                  const Color(0xFF0891b2),
+                                ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(28),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _prioritizedProductId != null &&
+                                    !_hiddenProductPaths.contains(
+                                      _prioritizedProductId,
+                                    )
+                                ? Icons.star
+                                : Icons.navigation,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _prioritizedProductId != null &&
+                                        !_hiddenProductPaths.contains(
+                                          _prioritizedProductId,
+                                        )
+                                    ? 'Selected'
+                                    : 'Heading to',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _nearestProductId!,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.5,
+                              const SizedBox(height: 2),
+                              Text(
+                                CartProducts.products
+                                    .where((p) => p.id == _displayedProductId)
+                                    .first
+                                    .name,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_nearestProductDistance != null) ...[
+                            const SizedBox(width: 16),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${_nearestProductDistance!.toStringAsFixed(1)}m',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ],
-                        ),
-                        if (_nearestProductDistance != null) ...[
-                          const SizedBox(width: 16),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_nearestProductDistance!.toStringAsFixed(1)}m',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-
-          // ✅ SIMPLIFIED: Normal rounded container callout
-          if (_selectedProductId != null && _selectedProductPosition != null)
-            Builder(
-              builder: (context) {
-                final screenPos = _getScreenPosition(_selectedProductPosition!);
-                return ProductCallout(
-                  productId: _selectedProductId!,
-                  position: screenPos,
-                  onClose: () {
-                    setState(() {
-                      _selectedProductId = null;
-                      _selectedProductPosition = null;
-                    });
-                  },
-                );
-              },
-            ),
-
-          Positioned(
-            bottom: 24,
-            left: 24,
-            child: Material(
-              elevation: 12,
-              borderRadius: BorderRadius.circular(56),
-              shadowColor: Colors.black38,
-              child: InkWell(
-                onTap: _toggleNearestPathVisibility,
-                borderRadius: BorderRadius.circular(56),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors:
-                          _nearestProductId != null &&
-                              _hiddenProductPaths.contains(_nearestProductId)
-                          ? [const Color(0xFFef4444), const Color(0xFFdc2626)]
-                          : [const Color(0xFF10b981), const Color(0xFF059669)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(56),
-                  ),
-                  child: Icon(
-                    _nearestProductId != null &&
-                            _hiddenProductPaths.contains(_nearestProductId)
-                        ? Icons.visibility_off
-                        : Icons.visibility,
-                    color: Colors.white,
-                    size: 28,
-                  ),
-                ),
+            if (_selectedProductId != null && _selectedProductPosition != null)
+              Builder(
+                builder: (context) {
+                  final screenPos = _getScreenPosition(
+                    _selectedProductPosition!,
+                  );
+                  return ProductCallout(
+                    productId: _selectedProductId!,
+                    position: screenPos,
+                    onClose: () {
+                      setState(() {
+                        _selectedProductId = null;
+                        _selectedProductPosition = null;
+                      });
+                    },
+                  );
+                },
               ),
-            ),
-          ),
-
-          Positioned(
-            bottom: 24,
-            right: 24,
-            child: Material(
-              elevation: 12,
-              borderRadius: BorderRadius.circular(56),
-              shadowColor: Colors.black38,
-              child: InkWell(
-                onTap: _toggleFollowMode,
-                borderRadius: BorderRadius.circular(56),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: _isFollowingTag
-                          ? [const Color(0xFF10b981), const Color(0xFF059669)]
-                          : [const Color(0xFF6366f1), const Color(0xFF4f46e5)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(56),
-                  ),
-                  child: Icon(
-                    _isFollowingTag ? Icons.gps_fixed : Icons.gps_not_fixed,
-                    color: Colors.white,
-                    size: 28,
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          if (_isFollowingTag)
             Positioned(
-              bottom: 100,
-              right: 0,
-              left: 0,
-              child: Center(
-                child: Material(
-                  elevation: 4,
-                  borderRadius: BorderRadius.circular(24),
-                  color: const Color(0xFF10b981),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
+              bottom: 24,
+              left: 24,
+              child: Material(
+                elevation: 12,
+                borderRadius: BorderRadius.circular(56),
+                shadowColor: Colors.black38,
+                child: InkWell(
+                  onTap: _toggleNearestPathVisibility,
+                  borderRadius: BorderRadius.circular(56),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(56),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        Icon(Icons.my_location, color: Colors.white, size: 18),
-                        SizedBox(width: 8),
-                        Text(
-                          'Following Cart',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
+                    child: Icon(
+                      FontAwesomeIcons.arrowRight,
+                      color: Colors.white,
                     ),
                   ),
                 ),
               ),
             ),
-        ],
+            Positioned(
+              bottom: 24,
+              right: 24,
+              child: Material(
+                elevation: 12,
+                borderRadius: BorderRadius.circular(56),
+                shadowColor: Colors.black38,
+                child: InkWell(
+                  onTap: _toggleFollowMode,
+                  borderRadius: BorderRadius.circular(56),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(56),
+                    ),
+                    child: Icon(
+                      _isFollowingTag ? Icons.gps_fixed : Icons.gps_not_fixed,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ✅ SIMPLIFIED: Normal rounded container callout (no CustomPainter)
 class ProductCallout extends StatelessWidget {
   final String productId;
   final Offset position;
@@ -2326,7 +2276,7 @@ class PriorityQueue<E> {
   bool get isEmpty => _elements.isEmpty;
 }
 
-// ✅ StaticMapCanvas
+// ✅ StaticMapCanvas - KEY FIX HERE!
 class StaticMapCanvas extends CustomPainter {
   StaticMapCanvas({
     required this.roomWidth,
@@ -2347,7 +2297,7 @@ class StaticMapCanvas extends CustomPainter {
   final num baseConvertion;
   final Offset? tagPosition;
   final double tagAccuracy;
-  final List<Map<String, dynamic>> productsLocation;
+  final List<Product> productsLocation;
   final Map<String, dynamic>? geoJsonData;
   final Map<String, List<Offset>> computedPaths;
   final Set<String> hiddenProductPaths;
@@ -2418,29 +2368,29 @@ class StaticMapCanvas extends CustomPainter {
       ..strokeWidth = 3;
     canvas.drawCircle(pixelPosition, 8, borderPaint);
 
-    final textSpan = TextSpan(
-      text:
-          'Cart\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-        backgroundColor: color.withValues(alpha: 0.9),
-        height: 1.4,
-      ),
-    );
+    // final textSpan = TextSpan(
+    //   text:
+    //       'Cart\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
+    //   style: TextStyle(
+    //     color: Colors.white,
+    //     fontSize: 10,
+    //     fontWeight: FontWeight.w600,
+    //     backgroundColor: color.withValues(alpha: 0.9),
+    //     height: 1.4,
+    //   ),
+    // );
 
-    final textPainter = TextPainter(
-      text: textSpan,
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
+    // final textPainter = TextPainter(
+    //   text: textSpan,
+    //   textAlign: TextAlign.center,
+    //   textDirection: TextDirection.ltr,
+    // );
 
-    textPainter.layout(minWidth: 0, maxWidth: 110);
-    textPainter.paint(
-      canvas,
-      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
-    );
+    // textPainter.layout(minWidth: 0, maxWidth: 110);
+    // textPainter.paint(
+    //   canvas,
+    //   Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
+    // );
   }
 
   void _drawPinpoint(Canvas canvas, String id, Offset position) {
@@ -2474,7 +2424,7 @@ class StaticMapCanvas extends CustomPainter {
     );
 
     final gradient = LinearGradient(
-      colors: [const Color(0xFFf43f5e), const Color(0xFFe11d48)],
+      colors: [Colors.green.shade600, Colors.green.shade300],
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
     );
@@ -2501,43 +2451,46 @@ class StaticMapCanvas extends CustomPainter {
       circlePaint,
     );
 
-    final textSpan = TextSpan(
-      text: id,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 11,
-        fontWeight: FontWeight.bold,
-        backgroundColor: Color(0xFF1f2937),
-      ),
-    );
+    // final textSpan = TextSpan(
+    //   text: id,
+    //   style: const TextStyle(
+    //     color: Colors.white,
+    //     fontSize: 11,
+    //     fontWeight: FontWeight.bold,
+    //     backgroundColor: Color(0xFF1f2937),
+    //   ),
+    // );
 
-    final textPainter = TextPainter(
-      text: textSpan,
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
+    // final textPainter = TextPainter(
+    //   text: textSpan,
+    //   textAlign: TextAlign.center,
+    //   textDirection: TextDirection.ltr,
+    // );
 
-    textPainter.layout(minWidth: 0, maxWidth: 80);
-    textPainter.paint(
-      canvas,
-      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
-    );
+    // textPainter.layout(minWidth: 0, maxWidth: 80);
+    // textPainter.paint(
+    //   canvas,
+    //   Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
+    // );
   }
 
+  // ✅ KEY FIX: Only displayed path is colorized!
   void _drawPath(
     Canvas canvas,
     List<Offset> path,
     Color color,
-    bool isNearest,
+    bool isDisplayed,
   ) {
     if (path.length < 2) {
       return;
     }
 
-    final pathColor = isNearest
+    // ✅ If NOT displayed = transparent gray, otherwise full color
+    final pathColor = isDisplayed
         ? color
-        : const Color(0xFF9ca3af).withValues(alpha: 0.4);
-    final strokeWidth = isNearest ? 5.0 : 3.0;
+        : const Color(0xFF9CA3AF).withValues(alpha: 0.2); // Transparent gray
+
+    final strokeWidth = isDisplayed ? 5.0 : 3.0;
 
     final paint = Paint()
       ..color = pathColor
@@ -2560,7 +2513,7 @@ class StaticMapCanvas extends CustomPainter {
       }
     }
 
-    if (isNearest) {
+    if (isDisplayed) {
       final shadowPaint = Paint()
         ..color = Colors.black.withValues(alpha: 0.2)
         ..strokeWidth = 7.0
@@ -2574,7 +2527,8 @@ class StaticMapCanvas extends CustomPainter {
 
     canvas.drawPath(pathToDraw, paint);
 
-    if (isNearest) {
+    // ✅ Only draw arrows on displayed path
+    if (isDisplayed) {
       final numArrows = 6;
       final arrowSpacing = 1.0 / numArrows;
 
@@ -2724,7 +2678,7 @@ class StaticMapCanvas extends CustomPainter {
 
     final paint = Paint()
       ..color = amenity == 'wall'
-          ? const Color(0xFF1f2937)
+          ? const Color(0xFFe5e7eb)
           : const Color(0xFF3b82f6)
       ..strokeWidth = amenity == 'wall' ? 4.0 : 2.5
       ..style = PaintingStyle.stroke
@@ -2767,11 +2721,11 @@ class StaticMapCanvas extends CustomPainter {
     }
 
     Color fillColor = const Color(0xFFe5e7eb);
-    Color strokeColor = const Color(0xFF9ca3af);
+    Color strokeColor = Colors.transparent;
 
     if (amenity == 'room') {
       fillColor = const Color(0xFFdbeafe);
-      strokeColor = const Color(0xFF3b82f6);
+      strokeColor = Colors.transparent;
     } else if (amenity == 'entrance' || properties?['door'] == 'yes') {
       fillColor = const Color(0xFFfef3c7);
       strokeColor = const Color(0xFFf59e0b);
@@ -2939,23 +2893,26 @@ class StaticMapCanvas extends CustomPainter {
       const Color(0xFF14b8a6),
     ];
 
+    // ✅ Draw all paths, but only displayed one is colorized
     int colorIndex = 0;
     for (var entry in computedPaths.entries) {
       if (!hiddenProductPaths.contains(entry.key)) {
-        final isNearest = entry.key == nearestProductId;
+        final isDisplayed = entry.key == nearestProductId;
         _drawPath(
           canvas,
           entry.value,
           colors[colorIndex % colors.length],
-          isNearest,
+          isDisplayed,
         );
       }
       colorIndex++;
     }
 
     for (var product in productsLocation) {
-      final id = product['id'] as String;
-      final position = product['position'] as Offset;
+      final id = product.id;
+      final x = product.coordinates["x"] ?? 0.0;
+      final y = product.coordinates["y"] ?? 0.0;
+      final position = Offset(x, y);
       _drawPinpoint(canvas, id, position);
     }
 

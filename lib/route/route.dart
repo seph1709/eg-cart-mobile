@@ -20,7 +20,7 @@ class AppRouter extends RootStackRouter {
     ),
     CustomRoute(
       page: HomeView.page,
-      initial: false,
+      initial: true,
       transitionsBuilder: TransitionsBuilders.noTransition,
     ),
     CustomRoute(
@@ -30,7 +30,7 @@ class AppRouter extends RootStackRouter {
     ),
     CustomRoute(
       page: MapView.page,
-      initial: true,
+      initial: false,
       transitionsBuilder: TransitionsBuilders.noTransition,
     ),
     AutoRoute(page: SearchView.page),

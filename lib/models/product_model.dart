@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class Products {
   static List<Product> products = [];
 }
@@ -13,6 +15,11 @@ class SearchResults {
 class CartProducts {
   static List<Product> products = [];
   static List<Map<Product, int>> countPerProduct = [];
+
+  // Add a method to convert the list of products to JSON
+  static List<dynamic> getProductsToJson() {
+    return jsonDecode(products.toString());
+  }
 }
 
 class Product {

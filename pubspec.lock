@@ -97,6 +97,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.2"
+  bottom_bar_with_sheet:
+    dependency: "direct main"
+    description:
+      name: bottom_bar_with_sheet
+      sha256: c9a43e90cb6886d1e012be661693a8b847d1b1879c81176b74d72a29eb4bf644
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.4.0"
   build:
     dependency: transitive
     description:
@@ -320,6 +328,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  font_awesome_flutter:
+    dependency: "direct main"
+    description:
+      name: font_awesome_flutter
+      sha256: b9011df3a1fa02993630b8fb83526368cf2206a711259830325bab2f1d2a4eb0
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.12.0"
   frontend_server_client:
     dependency: transitive
     description:
