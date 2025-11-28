@@ -21,31 +21,6 @@ class _CartViewState extends State<CartView> {
 
   var selectedProduct = [];
 
-  String getTotal() {
-    late List<double> productsPricesFromCart = [];
-    for (var currProduct in CartProducts.products) {
-      final id = currProduct.id;
-      final price = currProduct.price;
-      final discount = currProduct.discount;
-      var count = CartProducts.countPerProduct
-          .lastWhere((curr) {
-            return curr.keys.first.id == id;
-          })
-          .values
-          .first;
-
-      print("count: $count for $id");
-
-      productsPricesFromCart.add(getRealPrice(discount, price) * count);
-    }
-    print("prices $productsPricesFromCart");
-
-    final reduced = productsPricesFromCart.reduce(
-      (value, element) => value + element,
-    );
-    return formatDoubleWithCommas(reduced);
-  }
-
   @override
   Widget build(BuildContext context) {
     print("countProd: ${CartProducts.countPerProduct}");
@@ -388,7 +363,7 @@ class _CartViewState extends State<CartView> {
                               GetBuilder<SupabaseController>(
                                 builder: (c) {
                                   return Text(
-                                    "₱${getTotal()}",
+                                    "₱${c.getTotal()}",
                                     style: TextStyle(fontSize: 16),
                                   );
                                 },

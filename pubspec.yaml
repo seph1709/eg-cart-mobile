@@ -45,7 +45,7 @@ dependencies:
   permission_handler: ^12.0.1
   web_socket_channel: ^3.0.3
   bottom_bar_with_sheet: ^2.4.0
-  font_awesome_flutter: ^10.12.0
+  material_symbols_icons: ^4.2874.0
   
 
 dev_dependencies:

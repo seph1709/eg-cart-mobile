@@ -1,4 +1,5 @@
 import 'package:egcart_mobile/models/product_model.dart';
+import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,6 +7,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class SupabaseController extends GetxController {
   late final SupabaseClient supabaseClient;
   int indexNavigationBar = 0;
+
+  String? prioritizedProductId;
 
   @override
   void onInit() {
@@ -17,6 +20,31 @@ class SupabaseController extends GetxController {
   void onReady() {
     super.onReady();
     getFeaturedProducts();
+  }
+
+  String getTotal() {
+    late List<double> productsPricesFromCart = [];
+    for (var currProduct in CartProducts.products) {
+      final id = currProduct.id;
+      final price = currProduct.price;
+      final discount = currProduct.discount;
+      var count = CartProducts.countPerProduct
+          .lastWhere((curr) {
+            return curr.keys.first.id == id;
+          })
+          .values
+          .first;
+
+      print("count: $count for $id");
+
+      productsPricesFromCart.add(getRealPrice(discount, price) * count);
+    }
+    print("prices $productsPricesFromCart");
+
+    final reduced = productsPricesFromCart.reduce(
+      (value, element) => value + element,
+    );
+    return formatDoubleWithCommas(reduced);
   }
 
   Future<void> getFeaturedProducts() async {

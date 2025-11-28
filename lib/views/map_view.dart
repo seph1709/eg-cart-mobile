@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:auto_route/auto_route.dart';
 import 'package:bottom_bar_with_sheet/bottom_bar_with_sheet.dart';
+import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-
 import 'widgets/product_card_widget.dart';
 
 double metersToPixels(double meters, {int baseConvertion = 100}) {
@@ -30,7 +31,7 @@ class MapView extends StatefulWidget {
 
 class _MapViewState extends State<MapView>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  final String _esp32IpAddress = "192.168.1.100";
+  final String _esp32IpAddress = "172.16.42.15";
   final String _targetCartId = "cart001";
   final _bottomWithSheelController = BottomBarWithSheetController(
     initialIndex: 0,
@@ -49,8 +50,6 @@ class _MapViewState extends State<MapView>
   String? _selectedProductId;
   Offset? _selectedProductPosition;
 
-  String? _prioritizedProductId;
-
   String get _wsUrl => 'ws://$_esp32IpAddress/ws';
   var links =
       "{\"links\":[{\"A\":\"A0084\",\"R\":\"3.50\"},{\"A\":\"A0085\",\"R\":\"4.20\"},{\"A\":\"A0086\",\"R\":\"5.10\"},{\"A\":\"A0087\",\"R\":\"3.80\"}]}";
@@ -66,9 +65,9 @@ class _MapViewState extends State<MapView>
   StreamSubscription? _streamSubscription;
 
   static const List<int> _backoffDelays = [3, 6, 12, 30, 60];
-  static const Duration _pingInterval = Duration(seconds: 30);
-  static const Duration _heartbeatTimeout = Duration(seconds: 90);
-  static const Duration _connectionTimeout = Duration(seconds: 10);
+  static const Duration _pingInterval = Duration(seconds: 45);
+  static const Duration _heartbeatTimeout = Duration(seconds: 150);
+  static const Duration _connectionTimeout = Duration(seconds: 15);
 
   Offset? _currentTagPosition;
   Offset? _targetTagPosition;
@@ -87,6 +86,40 @@ class _MapViewState extends State<MapView>
   Matrix4? _lastTransformValue;
   Timer? _transformCheckTimer;
 
+  // ✅ CRITICAL: Update throttling to prevent freezing
+  DateTime? _lastStateUpdateTime;
+  Timer? _stateUpdateThrottleTimer;
+  static const Duration _minUpdateInterval = Duration(
+    milliseconds: 100,
+  ); // Max 10 updates/sec
+  bool _hasPendingUpdate = false;
+
+  // ✅ NEW: Reduced sensitivity (5cm minimum vs 1.5cm)
+  DateTime? _lastValidPositionTime;
+  int _consecutiveBadReadings = 0;
+  static const int _maxBadReadings = 3;
+  static const Duration _positionTimeout = Duration(seconds: 5);
+  static const double _maxAccuracyThreshold = 1.5;
+  static const double _minMovementThreshold = 0.05; // 5cm minimum (was 1.5cm)
+
+  // ✅ CRITICAL: Path update throttling (only update if moved > 20cm)
+  static const double _pathUpdateThreshold =
+      0.20; // 20cm for path recalculation
+
+  // Kalman filter state
+  Offset? _kalmanPosition;
+  Offset? _kalmanVelocity;
+  DateTime? _lastKalmanUpdate;
+
+  // Position history
+  final List<Offset> _positionHistory = [];
+  final List<DateTime> _positionTimeHistory = [];
+  static const int _historySize = 5;
+
+  // ✅ NEW: Pending position updates (batching)
+  Offset? _pendingTargetPosition;
+  double? _pendingAccuracy;
+
   Map<String, Offset> get anchorPositions => {
     "A0084": const Offset(0, 0),
     "A0085": Offset(roomWidth, 0),
@@ -95,9 +128,10 @@ class _MapViewState extends State<MapView>
   };
 
   String? get _displayedProductId {
-    if (_prioritizedProductId != null &&
-        !_hiddenProductPaths.contains(_prioritizedProductId)) {
-      return _prioritizedProductId;
+    final c = Get.find<SupabaseController>();
+    if (c.prioritizedProductId != null &&
+        !_hiddenProductPaths.contains(c.prioritizedProductId)) {
+      return c.prioritizedProductId;
     }
     return _nearestProductId;
   }
@@ -109,10 +143,8 @@ class _MapViewState extends State<MapView>
     }
 
     final product = CartProducts.products.firstWhere((p) => p.id == targetId);
-
     final x = product.coordinates['x'] ?? 0.0;
     final y = product.coordinates['y'] ?? 0.0;
-
     final productPosition = Offset(x, y);
     return math.sqrt(
       math.pow(_currentTagPosition!.dx - productPosition.dx, 2) +
@@ -152,6 +184,7 @@ class _MapViewState extends State<MapView>
     _connectWebSocket();
     _startHeartbeatMonitor();
     _startContinuousPositionUpdate();
+    _startThrottledStateUpdates(); // ✅ NEW: Start throttled updates
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -160,6 +193,30 @@ class _MapViewState extends State<MapView>
         _toggleFollowMode();
       }
     });
+  }
+
+  // ✅ CRITICAL: Throttled setState to prevent freezing
+  void _startThrottledStateUpdates() {
+    _stateUpdateThrottleTimer?.cancel();
+    _stateUpdateThrottleTimer = Timer.periodic(_minUpdateInterval, (timer) {
+      if (!mounted) return;
+
+      if (_hasPendingUpdate && _pendingTargetPosition != null) {
+        setState(() {
+          _targetTagPosition = _pendingTargetPosition;
+          _currentAccuracy = _pendingAccuracy ?? _currentAccuracy;
+          _hasPendingUpdate = false;
+        });
+        _lastStateUpdateTime = DateTime.now();
+      }
+    });
+  }
+
+  // ✅ NEW: Schedule update instead of immediate setState
+  void _schedulePositionUpdate(Offset position, double accuracy) {
+    _pendingTargetPosition = position;
+    _pendingAccuracy = accuracy;
+    _hasPendingUpdate = true;
   }
 
   void _startTransformMonitoring() {
@@ -188,14 +245,10 @@ class _MapViewState extends State<MapView>
 
     if (_lastTransformValue != null) {
       final currentTransform = _transformationController.value;
-
       if (!_areMatricesEqual(currentTransform, _lastTransformValue!)) {
         if (kDebugMode) {
           debugPrint('🔓 Auto-unlocking follow mode - user gesture detected');
         }
-        setState(() {
-          _isFollowingTag = false;
-        });
       }
     }
   }
@@ -217,7 +270,6 @@ class _MapViewState extends State<MapView>
 
   void _handleCanvasTap(Offset screenPosition) {
     final transform = _transformationController.value;
-
     final inverseTransform = Matrix4.inverted(transform);
     final transformedPosition = MatrixUtils.transformPoint(
       inverseTransform,
@@ -290,22 +342,19 @@ class _MapViewState extends State<MapView>
   }
 
   void _handleProductListTap(String productId) {
+    final c = Get.find<SupabaseController>();
     setState(() {
       if (_hiddenProductPaths.contains(productId)) {
         _hiddenProductPaths.remove(productId);
-        _prioritizedProductId = productId;
-        // _showSnackBar('✅ Restored path to $productId');
+        c.prioritizedProductId = productId;
         if (kDebugMode) {
           debugPrint('🔄 Restored and prioritized: $productId');
         }
       } else {
-        if (_prioritizedProductId == productId) {
-          _prioritizedProductId = null;
-          if (kDebugMode) {
-            debugPrint('❌ Deprioritized: $productId');
-          }
+        if (c.prioritizedProductId == productId) {
+          // Do nothing
         } else {
-          _prioritizedProductId = productId;
+          c.prioritizedProductId = productId;
           if (kDebugMode) {
             debugPrint('🎯 Prioritized product: $productId');
           }
@@ -338,6 +387,7 @@ class _MapViewState extends State<MapView>
     return Offset(transformedX, transformedY);
   }
 
+  // ✅ OPTIMIZED: Smoother, less frequent interpolation
   void _startContinuousPositionUpdate() {
     _positionUpdateTimer?.cancel();
     _positionUpdateTimer = Timer.periodic(const Duration(milliseconds: 50), (
@@ -352,16 +402,29 @@ class _MapViewState extends State<MapView>
         );
 
         if (distance > 0.01) {
-          final speed = distance > 0.5 ? 0.25 : 0.15;
+          double speed;
+          double estimatedVelocity = _estimateVelocity();
 
-          setState(() {
-            _currentTagPosition = Offset(
-              _currentTagPosition!.dx +
-                  (_targetTagPosition!.dx - _currentTagPosition!.dx) * speed,
-              _currentTagPosition!.dy +
-                  (_targetTagPosition!.dy - _currentTagPosition!.dy) * speed,
-            );
-          });
+          // ✅ OPTIMIZED: Slower, smoother interpolation
+          if (estimatedVelocity > 0.5) {
+            speed = 0.30; // Reduced from 0.45
+          } else if (distance > 0.3) {
+            speed = 0.25; // Reduced from 0.35
+          } else if (distance > 0.15) {
+            speed = 0.18; // Reduced from 0.25
+          } else if (distance > 0.05) {
+            speed = 0.12; // Reduced from 0.18
+          } else {
+            speed = 0.08; // Reduced from 0.12
+          }
+
+          // ✅ CRITICAL: Update without setState (just modify the value)
+          _currentTagPosition = Offset(
+            _currentTagPosition!.dx +
+                (_targetTagPosition!.dx - _currentTagPosition!.dx) * speed,
+            _currentTagPosition!.dy +
+                (_targetTagPosition!.dy - _currentTagPosition!.dy) * speed,
+          );
 
           if (_isFollowingTag && !_cameraAnimationController.isAnimating) {
             _centerOnTagSmooth(animate: false);
@@ -369,6 +432,31 @@ class _MapViewState extends State<MapView>
         }
       }
     });
+  }
+
+  double _estimateVelocity() {
+    if (_positionHistory.length < 2) return 0.0;
+
+    final recentPositions = _positionHistory.length > 3
+        ? _positionHistory.sublist(_positionHistory.length - 3)
+        : _positionHistory;
+    final recentTimes = _positionTimeHistory.length > 3
+        ? _positionTimeHistory.sublist(_positionTimeHistory.length - 3)
+        : _positionTimeHistory;
+
+    if (recentPositions.length < 2) return 0.0;
+
+    double totalDistance = 0.0;
+    for (int i = 1; i < recentPositions.length; i++) {
+      totalDistance += math.sqrt(
+        math.pow(recentPositions[i].dx - recentPositions[i - 1].dx, 2) +
+            math.pow(recentPositions[i].dy - recentPositions[i - 1].dy, 2),
+      );
+    }
+
+    final totalTime =
+        recentTimes.last.difference(recentTimes.first).inMilliseconds / 1000.0;
+    return totalTime > 0 ? totalDistance / totalTime : 0.0;
   }
 
   void _loadDefaultGeoJsonData() {
@@ -656,7 +744,6 @@ class _MapViewState extends State<MapView>
   void _parseGeoJsonString(String geoJsonString) {
     try {
       final data = jsonDecode(geoJsonString) as Map<String, dynamic>;
-
       final features = data['features'] as List?;
       if (features != null) {
         for (var feature in features) {
@@ -688,7 +775,6 @@ class _MapViewState extends State<MapView>
       if (kDebugMode) {
         debugPrint('❌ Failed to parse GeoJSON: $e');
       }
-      // _showSnackBar('Failed to parse GeoJSON file', isError: true);
     }
   }
 
@@ -736,7 +822,6 @@ class _MapViewState extends State<MapView>
         50;
 
     final targetScale = 1.0;
-
     final offsetX = screenWidth / 2 - (tagCanvasX * targetScale);
     final offsetY = screenHeight / 2 - (tagCanvasY * targetScale);
 
@@ -746,7 +831,6 @@ class _MapViewState extends State<MapView>
 
     if (animate) {
       final currentMatrix = _transformationController.value;
-
       _cameraAnimation = Matrix4Tween(begin: currentMatrix, end: targetMatrix)
           .animate(
             CurvedAnimation(
@@ -793,10 +877,10 @@ class _MapViewState extends State<MapView>
   }
 
   void _toggleNearestPathVisibility() {
-    final targetProductId = _prioritizedProductId ?? _nearestProductId;
+    final c = Get.find<SupabaseController>();
+    final targetProductId = c.prioritizedProductId ?? _nearestProductId;
 
     if (targetProductId == null) {
-      // _showSnackBar('No product found', isError: true);
       if (kDebugMode) {
         debugPrint('⚠️ No product to exclude/whitelist');
       }
@@ -815,7 +899,7 @@ class _MapViewState extends State<MapView>
           debugPrint('❌ Excluded path to $targetProductId');
         }
 
-        if (targetProductId == _prioritizedProductId) {
+        if (targetProductId == c.prioritizedProductId) {
           if (kDebugMode) {
             debugPrint(
               '🎯 Prioritized product excluded, auto-switching to nearest',
@@ -827,17 +911,25 @@ class _MapViewState extends State<MapView>
     });
   }
 
+  // ✅ CRITICAL: Smart path updates - only if moved > 20cm
   void _computePathsFromTag() {
     if (_currentTagPosition == null || geoJsonData == null) {
       return;
     }
 
+    // ✅ CRITICAL: Check if we've moved enough to warrant path recalculation
     if (_lastPathComputePosition != null) {
       final distance = math.sqrt(
         math.pow(_currentTagPosition!.dx - _lastPathComputePosition!.dx, 2) +
             math.pow(_currentTagPosition!.dy - _lastPathComputePosition!.dy, 2),
       );
-      if (distance < 0.2) {
+
+      if (distance < _pathUpdateThreshold) {
+        if (kDebugMode) {
+          debugPrint(
+            '⏭️ Skipped path update: ${(distance * 100).toStringAsFixed(1)}cm < ${(_pathUpdateThreshold * 100).toStringAsFixed(0)}cm threshold',
+          );
+        }
         return;
       }
     }
@@ -874,6 +966,7 @@ class _MapViewState extends State<MapView>
 
     _updateNearestProduct();
 
+    // ✅ CRITICAL: Batch update - single setState
     setState(() {
       _computedPaths = newPaths;
       _lastPathComputePosition = _currentTagPosition;
@@ -887,6 +980,7 @@ class _MapViewState extends State<MapView>
 
   void _updateNearestProduct() {
     if (_currentTagPosition == null) {
+      Get.find<SupabaseController>().update();
       return;
     }
 
@@ -914,9 +1008,9 @@ class _MapViewState extends State<MapView>
       }
     }
 
-    setState(() {
-      _nearestProductId = nearestId;
-    });
+    // ✅ Don't call setState here - just update the value
+    _nearestProductId = nearestId;
+    Get.find<SupabaseController>().update();
   }
 
   @override
@@ -924,6 +1018,7 @@ class _MapViewState extends State<MapView>
     WidgetsBinding.instance.removeObserver(this);
     _positionUpdateTimer?.cancel();
     _transformCheckTimer?.cancel();
+    _stateUpdateThrottleTimer?.cancel(); // ✅ NEW: Cancel throttle timer
     _transformationController.removeListener(_onTransformChanged);
     _cleanup();
     _animationController.dispose();
@@ -955,13 +1050,10 @@ class _MapViewState extends State<MapView>
   void _cleanup() {
     _pingTimer?.cancel();
     _pingTimer = null;
-
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
-
     _streamSubscription?.cancel();
     _streamSubscription = null;
 
@@ -982,7 +1074,7 @@ class _MapViewState extends State<MapView>
 
   void _startHeartbeatMonitor() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
       if (_lastMessageTime != null) {
         final timeSinceLastMessage = DateTime.now().difference(
           _lastMessageTime!,
@@ -1049,7 +1141,6 @@ class _MapViewState extends State<MapView>
     }
 
     _isConnecting = true;
-
     _pingTimer?.cancel();
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -1071,7 +1162,10 @@ class _MapViewState extends State<MapView>
         debugPrint('🔌 Connecting to WebSocket: $_wsUrl');
       }
 
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      _channel = WebSocketChannel.connect(
+        Uri.parse(_wsUrl),
+        protocols: ['websocket'],
+      );
 
       final timeoutFuture = Future.delayed(_connectionTimeout, () => false);
       final connectionFuture = _channel!.ready.then((_) => true).catchError((
@@ -1091,7 +1185,11 @@ class _MapViewState extends State<MapView>
 
       _streamSubscription = _channel!.stream.listen(
         _onWebSocketMessage,
-        onError: _onWebSocketError,
+        onError: (error) {
+          if (kDebugMode) {
+            debugPrint('❌ Stream error: $error');
+          }
+        },
         onDone: _onWebSocketDone,
         cancelOnError: false,
       );
@@ -1106,9 +1204,10 @@ class _MapViewState extends State<MapView>
 
       _lastMessageTime = DateTime.now();
       _startPingTimer();
+      _startHeartbeatMonitor();
 
       if (kDebugMode) {
-        debugPrint('✅ WebSocket connected successfully');
+        debugPrint('✅ WebSocket connected - Forever mode active');
       }
     } catch (e) {
       if (kDebugMode) {
@@ -1165,7 +1264,7 @@ class _MapViewState extends State<MapView>
 
       if (message == 'pong') {
         if (kDebugMode) {
-          debugPrint('🏓 Pong received');
+          debugPrint('🏓 Pong received - connection alive');
         }
         return;
       }
@@ -1268,7 +1367,7 @@ class _MapViewState extends State<MapView>
         activeAnchors,
         roomWidth: roomWidth,
         roomHeight: roomHeight,
-        previousPosition: _currentTagPosition,
+        previousPosition: _kalmanPosition ?? _currentTagPosition,
       );
 
       final result = multilateration.calcUserLocation();
@@ -1290,11 +1389,8 @@ class _MapViewState extends State<MapView>
         _updateTagPosition(constrainedPosition, accuracy);
       }
 
-      if (mounted) {
-        setState(() {
-          links = newLinks;
-        });
-      }
+      // ✅ CRITICAL: Don't update links in setState - just store it
+      links = newLinks;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('❌ Position calculation error: $e');
@@ -1302,15 +1398,56 @@ class _MapViewState extends State<MapView>
     }
   }
 
+  // ✅ ULTIMATE FIX: Kalman-filtered position with throttled updates
   void _updateTagPosition(Offset newPosition, double accuracy) {
-    if (_currentTagPosition == null) {
-      if (mounted) {
-        setState(() {
-          _currentTagPosition = newPosition;
-          _targetTagPosition = newPosition;
-          _currentAccuracy = accuracy;
-        });
+    // ✅ FIX 1: Reject poor accuracy
+    if (accuracy > _maxAccuracyThreshold) {
+      _consecutiveBadReadings++;
+      if (kDebugMode) {
+        debugPrint(
+          '❌ REJECTED: Poor accuracy ${accuracy.toStringAsFixed(2)}m (threshold: $_maxAccuracyThreshold) - Bad readings: $_consecutiveBadReadings',
+        );
       }
+
+      if (_consecutiveBadReadings > _maxBadReadings) {
+        if (kDebugMode) {
+          debugPrint('🔄 Too many bad readings, waiting for good signal...');
+        }
+      }
+      return;
+    }
+
+    // ✅ FIX 2: Apply Kalman filter
+    final filteredPosition = _applyKalmanFilter(newPosition);
+
+    // ✅ FIX 3: Check timeout
+    if (_lastValidPositionTime != null) {
+      final timeSinceLastValid = DateTime.now().difference(
+        _lastValidPositionTime!,
+      );
+      if (timeSinceLastValid > _positionTimeout) {
+        if (kDebugMode) {
+          debugPrint('⏱️ Position timeout, resetting to new position');
+        }
+
+        // ✅ CRITICAL: Use scheduled update instead of setState
+        _schedulePositionUpdate(filteredPosition, accuracy);
+        _currentTagPosition = filteredPosition;
+        _lastValidPositionTime = DateTime.now();
+        _consecutiveBadReadings = 0;
+
+        _computePathsFromTag();
+        return;
+      }
+    }
+
+    // ✅ FIX 4: First valid position
+    if (_currentTagPosition == null) {
+      // ✅ CRITICAL: Use scheduled update
+      _schedulePositionUpdate(filteredPosition, accuracy);
+      _currentTagPosition = filteredPosition;
+      _lastValidPositionTime = DateTime.now();
+      _consecutiveBadReadings = 0;
 
       _computePathsFromTag();
 
@@ -1324,17 +1461,107 @@ class _MapViewState extends State<MapView>
       return;
     }
 
-    _currentAccuracy = accuracy;
-    _targetTagPosition = newPosition;
-
+    // ✅ FIX 5: Calculate movement distance
     final distance = math.sqrt(
-      math.pow(newPosition.dx - _currentTagPosition!.dx, 2) +
-          math.pow(newPosition.dy - _currentTagPosition!.dy, 2),
+      math.pow(filteredPosition.dx - _currentTagPosition!.dx, 2) +
+          math.pow(filteredPosition.dy - _currentTagPosition!.dy, 2),
     );
 
-    if (distance > 0.2) {
+    // ✅ FIX 6: Ignore micro-movements (5cm threshold)
+    if (distance < _minMovementThreshold) {
+      if (kDebugMode) {
+        debugPrint(
+          '🔇 Ignored micro-movement: ${(distance * 100).toStringAsFixed(1)}cm (threshold: ${(_minMovementThreshold * 100).toStringAsFixed(1)}cm)',
+        );
+      }
+      _currentAccuracy = accuracy;
+      _lastValidPositionTime = DateTime.now();
+      _consecutiveBadReadings = 0;
+      return;
+    }
+
+    // ✅ FIX 7: Valid position update - use throttled update
+    _currentAccuracy = accuracy;
+    _lastValidPositionTime = DateTime.now();
+    _consecutiveBadReadings = 0;
+
+    // ✅ CRITICAL: Schedule update instead of immediate setState
+    _schedulePositionUpdate(filteredPosition, accuracy);
+
+    // Add to position history
+    _positionHistory.add(filteredPosition);
+    _positionTimeHistory.add(DateTime.now());
+    if (_positionHistory.length > _historySize) {
+      _positionHistory.removeAt(0);
+      _positionTimeHistory.removeAt(0);
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '✅ Valid position update: ${(distance * 100).toStringAsFixed(1)}cm movement',
+      );
+    }
+
+    // ✅ CRITICAL: Only update paths if moved > 20cm (throttled)
+    if (distance > _pathUpdateThreshold) {
       _computePathsFromTag();
     }
+  }
+
+  // ✅ Kalman filter implementation
+  Offset _applyKalmanFilter(Offset measurement) {
+    final now = DateTime.now();
+
+    if (_kalmanPosition == null) {
+      _kalmanPosition = measurement;
+      _kalmanVelocity = const Offset(0, 0);
+      _lastKalmanUpdate = now;
+      return measurement;
+    }
+
+    final dt = now.difference(_lastKalmanUpdate!).inMilliseconds / 1000.0;
+    if (dt <= 0 || dt > 1.0) {
+      _kalmanPosition = measurement;
+      _kalmanVelocity = const Offset(0, 0);
+      _lastKalmanUpdate = now;
+      return measurement;
+    }
+
+    // Predict step
+    final predictedPosition = Offset(
+      _kalmanPosition!.dx + _kalmanVelocity!.dx * dt,
+      _kalmanPosition!.dy + _kalmanVelocity!.dy * dt,
+    );
+
+    // Update step - ✅ INCREASED process noise for smoother tracking
+    const processNoise = 0.08; // Increased from 0.05
+    const measurementNoise = 0.20; // Increased from 0.15
+
+    final kalmanGain = processNoise / (processNoise + measurementNoise);
+
+    final updatedPosition = Offset(
+      predictedPosition.dx +
+          kalmanGain * (measurement.dx - predictedPosition.dx),
+      predictedPosition.dy +
+          kalmanGain * (measurement.dy - predictedPosition.dy),
+    );
+
+    // Update velocity estimate - ✅ MORE smoothing
+    final newVelocity = Offset(
+      (updatedPosition.dx - _kalmanPosition!.dx) / dt,
+      (updatedPosition.dy - _kalmanPosition!.dy) / dt,
+    );
+
+    // ✅ INCREASED smoothing for velocity
+    _kalmanVelocity = Offset(
+      _kalmanVelocity!.dx * 0.80 + newVelocity.dx * 0.20, // Was 0.7/0.3
+      _kalmanVelocity!.dy * 0.80 + newVelocity.dy * 0.20,
+    );
+
+    _kalmanPosition = updatedPosition;
+    _lastKalmanUpdate = now;
+
+    return updatedPosition;
   }
 
   @override
@@ -1344,329 +1571,354 @@ class _MapViewState extends State<MapView>
     final canvasHeight =
         metersToPixels(roomHeight, baseConvertion: baseConvertion.toInt()) +
         100;
+    final c = Get.find<SupabaseController>();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-      bottomNavigationBar: BottomBarWithSheet(
-        disableMainActionButton: true,
-        onSelectItem: (index) {
-          if (index == 1) {
-            context.pushRoute(const CartView());
-          } else {
-            _bottomWithSheelController.toggleSheet();
-          }
-        },
-        controller: _bottomWithSheelController,
-        bottomBarTheme: const BottomBarTheme(
-          contentPadding: EdgeInsets.only(top: 10),
-          selectedItemIconColor: Colors.white,
-          heightClosed: 50,
-          itemIconSize: 27,
-          selectedItemIconSize: 27,
-          decoration: BoxDecoration(
-            color: Colors.green,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(25),
-              topRight: Radius.circular(25),
+    return GetBuilder<SupabaseController>(
+      builder: (con) {
+        return Scaffold(
+          appBar: AppBar(
+            toolbarHeight: 0.0,
+            systemOverlayStyle: SystemUiOverlayStyle(
+              systemNavigationBarColor: Colors.green,
             ),
           ),
-          itemIconColor: Colors.white,
-        ),
-        items: const [
-          BottomBarWithSheetItem(icon: FontAwesomeIcons.anglesUp),
-          BottomBarWithSheetItem(icon: Icons.shopping_cart),
-        ],
-        sheetChild: Container(
-          decoration: const BoxDecoration(
-            // color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(25),
-              topRight: Radius.circular(25),
+          backgroundColor: const Color(0xFFF5F5F5),
+          bottomNavigationBar: BottomBarWithSheet(
+            disableMainActionButton: true,
+            onSelectItem: (index) {
+              if (index == 1) {
+                context.pushRoute(const SearchView());
+              } else {
+                _bottomWithSheelController.toggleSheet();
+              }
+            },
+            controller: _bottomWithSheelController,
+            bottomBarTheme: const BottomBarTheme(
+              contentPadding: EdgeInsets.only(top: 10),
+              selectedItemIconColor: Colors.white,
+              heightClosed: 50,
+              itemIconSize: 27,
+              selectedItemIconSize: 27,
+              decoration: BoxDecoration(
+                color: Colors.green,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(25),
+                  topRight: Radius.circular(25),
+                ),
+              ),
+              itemIconColor: Colors.white,
             ),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 16),
-              const Text(
-                'Products',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: CartProducts.products.length,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  itemBuilder: (context, index) {
-                    if (CartProducts.products.isEmpty) {
-                      return const SizedBox.shrink();
-                    }
-                    return GestureDetector(
-                      onTap: () {
-                        _handleProductListTap(CartProducts.products[index].id);
-                      },
-                      child: GridView.builder(
-                        shrinkWrap: true,
-                        physics: NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 25,
-                          mainAxisSpacing: 30,
-                          childAspectRatio: 0.8,
-                        ),
-                        itemCount: 4,
-                        itemBuilder: (context, index) {
-                          // return Text("");
-
-                          //make the cart products unique by filtering duplicates using id
-
-                          CartProducts.products = CartProducts.products
-                              .toSet()
-                              .toList();
-
-                          try {
-                            final currenProduct = CartProducts.products[index];
-                            return buildProductCard(currenProduct);
-                          } catch (e) {
-                            return const SizedBox.shrink();
-                          }
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
+            items: const [
+              BottomBarWithSheetItem(icon: Icons.menu_open_rounded),
+              BottomBarWithSheetItem(icon: Icons.search_rounded),
             ],
-          ),
-        ),
-      ),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Listener(
-              onPointerDown: (details) {
-                _handleCanvasTap(details.localPosition);
-              },
-              child: AnimatedBuilder(
-                animation: _arrowAnimationController,
-                builder: (context, child) {
-                  return InteractiveViewer(
-                    transformationController: _transformationController,
-                    minScale: 0.3,
-                    maxScale: 4.0,
-                    boundaryMargin: const EdgeInsets.all(double.infinity),
-                    constrained: false,
-                    panEnabled: true,
-                    scaleEnabled: true,
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: StaticMapCanvas(
-                          roomWidth: roomWidth,
-                          roomHeight: roomHeight,
-                          baseConvertion: baseConvertion,
-                          tagPosition: _currentTagPosition,
-                          tagAccuracy: _currentAccuracy,
-                          productsLocation: CartProducts.products,
-                          geoJsonData: geoJsonData,
-                          computedPaths: _computedPaths,
-                          hiddenProductPaths: _hiddenProductPaths,
-                          nearestProductId: _displayedProductId,
-                          animationValue: _arrowAnimationController.value,
+            sheetChild: Container(
+              decoration: const BoxDecoration(
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(25),
+                  topRight: Radius.circular(25),
+                ),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      const Text(
+                        'Products',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
                         ),
-                        size: Size(canvasWidth, canvasHeight),
+                      ),
+                      Text(
+                        "Total: ₱${c.getTotal()}",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 15),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsetsGeometry.symmetric(horizontal: 18),
+                      child: SingleChildScrollView(
+                        child: GridView.builder(
+                          shrinkWrap: true,
+                          physics: NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 25,
+                                mainAxisSpacing: 30,
+                                childAspectRatio: 0.8,
+                              ),
+                          itemCount: CartProducts.products.length,
+                          itemBuilder: (context, index) {
+                            if (CartProducts.products.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return GestureDetector(
+                              onTap: () {
+                                _handleProductListTap(
+                                  CartProducts.products[index].id,
+                                );
+                                _bottomWithSheelController.closeSheet();
+                              },
+                              child: buildProductCard(
+                                CartProducts.products[index],
+                                isFromCart: true,
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
-                  );
-                },
+                  ),
+                ],
               ),
             ),
-            if (_displayedProductId != null &&
-                !_hiddenProductPaths.contains(_displayedProductId))
-              Positioned(
-                top: 16,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Material(
-                    elevation: 8,
-                    borderRadius: BorderRadius.circular(28),
-                    shadowColor: Colors.black26,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors:
-                              _prioritizedProductId != null &&
-                                  !_hiddenProductPaths.contains(
-                                    _prioritizedProductId,
-                                  )
-                              ? [
-                                  const Color(0xFF10b981),
-                                  const Color(0xFF059669),
-                                ]
-                              : [
-                                  const Color(0xFF06b6d4),
-                                  const Color(0xFF0891b2),
-                                ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _prioritizedProductId != null &&
-                                    !_hiddenProductPaths.contains(
-                                      _prioritizedProductId,
-                                    )
-                                ? Icons.star
-                                : Icons.navigation,
-                            color: Colors.white,
-                            size: 20,
+          ),
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Listener(
+                  onPointerDown: (details) {
+                    _handleCanvasTap(details.localPosition);
+                  },
+                  child: AnimatedBuilder(
+                    animation: _arrowAnimationController,
+                    builder: (context, child) {
+                      return InteractiveViewer(
+                        transformationController: _transformationController,
+                        minScale: 0.3,
+                        maxScale: 4.0,
+                        boundaryMargin: const EdgeInsets.all(double.infinity),
+                        constrained: false,
+                        panEnabled: true,
+                        scaleEnabled: true,
+                        child: RepaintBoundary(
+                          child: CustomPaint(
+                            painter: StaticMapCanvas(
+                              roomWidth: roomWidth,
+                              roomHeight: roomHeight,
+                              baseConvertion: baseConvertion,
+                              tagPosition: _currentTagPosition,
+                              tagAccuracy: _currentAccuracy,
+                              productsLocation: CartProducts.products,
+                              geoJsonData: geoJsonData,
+                              computedPaths: _computedPaths,
+                              hiddenProductPaths: _hiddenProductPaths,
+                              nearestProductId: _displayedProductId,
+                              animationValue: _arrowAnimationController.value,
+                            ),
+                            size: Size(canvasWidth, canvasHeight),
                           ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    context.replaceRoute(CartView());
+                  },
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    margin: EdgeInsets.only(left: 10),
+                    child: Icon(Icons.arrow_back, color: Colors.white),
+                  ),
+                ),
+                if (_displayedProductId != null &&
+                    !_hiddenProductPaths.contains(_displayedProductId))
+                  Positioned(
+                    top: 35,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Material(
+                        elevation: 8,
+                        borderRadius: BorderRadius.circular(28),
+                        shadowColor: Colors.black26,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors:
+                                  c.prioritizedProductId != null &&
+                                      !_hiddenProductPaths.contains(
+                                        c.prioritizedProductId,
+                                      )
+                                  ? [
+                                      const Color(0xFF10b981),
+                                      const Color(0xFF059669),
+                                    ]
+                                  : [
+                                      const Color(0xFF06b6d4),
+                                      const Color(0xFF0891b2),
+                                    ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Text(
-                                _prioritizedProductId != null &&
+                              Icon(
+                                c.prioritizedProductId != null &&
                                         !_hiddenProductPaths.contains(
-                                          _prioritizedProductId,
+                                          c.prioritizedProductId,
                                         )
-                                    ? 'Selected'
-                                    : 'Heading to',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                                    ? Icons.star
+                                    : Icons.navigation,
+                                color: Colors.white,
+                                size: 20,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                CartProducts.products
-                                    .where((p) => p.id == _displayedProductId)
-                                    .first
-                                    .name,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.5,
-                                ),
+                              const SizedBox(width: 12),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Heading to',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    CartProducts.products
+                                        .where(
+                                          (p) => p.id == _displayedProductId,
+                                        )
+                                        .first
+                                        .name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
                               ),
+                              if (_nearestProductDistance != null) ...[
+                                const SizedBox(width: 16),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${_nearestProductDistance!.toStringAsFixed(1)}m',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
-                          if (_nearestProductDistance != null) ...[
-                            const SizedBox(width: 16),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '${_nearestProductDistance!.toStringAsFixed(1)}m',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_selectedProductId != null &&
+                    _selectedProductPosition != null)
+                  Builder(
+                    builder: (context) {
+                      final screenPos = _getScreenPosition(
+                        _selectedProductPosition!,
+                      );
+                      return ProductCallout(
+                        productId: _selectedProductId!,
+                        position: screenPos,
+                        onClose: () {
+                          setState(() {
+                            _selectedProductId = null;
+                            _selectedProductPosition = null;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                Positioned(
+                  bottom: 24,
+                  left: 24,
+                  child: Material(
+                    elevation: 12,
+                    borderRadius: BorderRadius.circular(56),
+                    shadowColor: Colors.black38,
+                    child: InkWell(
+                      onTap: _toggleNearestPathVisibility,
+                      borderRadius: BorderRadius.circular(56),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.circular(56),
+                        ),
+                        child: Icon(Icons.route_outlined, color: Colors.white),
                       ),
                     ),
                   ),
                 ),
-              ),
-            if (_selectedProductId != null && _selectedProductPosition != null)
-              Builder(
-                builder: (context) {
-                  final screenPos = _getScreenPosition(
-                    _selectedProductPosition!,
-                  );
-                  return ProductCallout(
-                    productId: _selectedProductId!,
-                    position: screenPos,
-                    onClose: () {
-                      setState(() {
-                        _selectedProductId = null;
-                        _selectedProductPosition = null;
-                      });
-                    },
-                  );
-                },
-              ),
-            Positioned(
-              bottom: 24,
-              left: 24,
-              child: Material(
-                elevation: 12,
-                borderRadius: BorderRadius.circular(56),
-                shadowColor: Colors.black38,
-                child: InkWell(
-                  onTap: _toggleNearestPathVisibility,
-                  borderRadius: BorderRadius.circular(56),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.green,
+                Positioned(
+                  bottom: 24,
+                  right: 24,
+                  child: Material(
+                    elevation: 12,
+                    borderRadius: BorderRadius.circular(56),
+                    shadowColor: Colors.black38,
+                    child: InkWell(
+                      onTap: _toggleFollowMode,
                       borderRadius: BorderRadius.circular(56),
-                    ),
-                    child: Icon(
-                      FontAwesomeIcons.arrowRight,
-                      color: Colors.white,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          borderRadius: BorderRadius.circular(56),
+                        ),
+                        child: Icon(
+                          _isFollowingTag
+                              ? Icons.gps_fixed
+                              : Icons.gps_not_fixed,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
-            Positioned(
-              bottom: 24,
-              right: 24,
-              child: Material(
-                elevation: 12,
-                borderRadius: BorderRadius.circular(56),
-                shadowColor: Colors.black38,
-                child: InkWell(
-                  onTap: _toggleFollowMode,
-                  borderRadius: BorderRadius.circular(56),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      borderRadius: BorderRadius.circular(56),
-                    ),
-                    child: Icon(
-                      _isFollowingTag ? Icons.gps_fixed : Icons.gps_not_fixed,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1723,10 +1975,13 @@ class ProductCallout extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        productId,
+                        CartProducts.products
+                            .where((p) => p.id == productId)
+                            .first
+                            .name,
                         style: const TextStyle(
                           color: Color(0xFF1f2937),
-                          fontSize: 16,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -1742,34 +1997,51 @@ class ProductCallout extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
+                const Text(
+                  'Rack: 2',
+                  style: TextStyle(
+                    color: Color(0xFF6b7280),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF10b981).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.check_circle,
-                        color: Color(0xFF10b981),
-                        size: 14,
-                      ),
-                      SizedBox(width: 6),
-                      Text(
-                        'In Stock',
-                        style: TextStyle(
+                GestureDetector(
+                  onTap: () {
+                    final c = Get.find<SupabaseController>();
+                    c.prioritizedProductId = productId;
+                    if (kDebugMode) {
+                      debugPrint('🎯 Prioritized product: $productId');
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10b981).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.arrow_circle_up_rounded,
                           color: Color(0xFF10b981),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
+                          size: 20,
                         ),
-                      ),
-                    ],
+                        SizedBox(width: 6),
+                        Text(
+                          'Navigate',
+                          style: TextStyle(
+                            color: Color(0xFF10b981),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -1781,7 +2053,6 @@ class ProductCallout extends StatelessWidget {
   }
 }
 
-// ✅ PathNode for A* pathfinding
 class PathNode {
   final Offset position;
   final PathNode? parent;
@@ -1799,7 +2070,6 @@ class PathNode {
   int get hashCode => position.hashCode;
 }
 
-// ✅ Pathfinder class
 class Pathfinder {
   final double roomWidth;
   final double roomHeight;
@@ -1825,14 +2095,9 @@ class Pathfinder {
   }
 
   void _extractBaseCoordinates() {
-    if (geoJsonData == null) {
-      return;
-    }
-
+    if (geoJsonData == null) return;
     final features = geoJsonData!['features'] as List?;
-    if (features == null) {
-      return;
-    }
+    if (features == null) return;
 
     for (var feature in features) {
       final properties = feature['properties'] as Map<String, dynamic>?;
@@ -1846,24 +2111,15 @@ class Pathfinder {
 
   void _buildObstacleCache() {
     _obstacles.clear();
-    if (geoJsonData == null) {
-      return;
-    }
-
+    if (geoJsonData == null) return;
     final features = geoJsonData!['features'] as List?;
-    if (features == null) {
-      return;
-    }
+    if (features == null) return;
 
     for (var feature in features) {
       final geometry = feature['geometry'];
       final properties = feature['properties'] as Map<String, dynamic>?;
       final amenity = properties?['amenity'] as String?;
-
-      if (geometry == null) {
-        continue;
-      }
-
+      if (geometry == null) continue;
       final geometryType = geometry['type'] as String?;
 
       if (amenity == 'wall' || amenity == 'room' || amenity == 'stairs') {
@@ -1909,75 +2165,56 @@ class Pathfinder {
 
   List<Offset> _extractPolygonPoints(Map<String, dynamic> geometry) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.isEmpty) {
-      return [];
-    }
-
+    if (coordinates == null || coordinates.isEmpty) return [];
     final ring = coordinates[0] as List;
     final points = <Offset>[];
-
     for (var coord in ring) {
       final lon = (coord[0] as num).toDouble();
       final lat = (coord[1] as num).toDouble();
       points.add(_latLonToMeters(lon, lat));
     }
-
     return points;
   }
 
   List<Offset> _extractLinePoints(Map<String, dynamic> geometry) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null) {
-      return [];
-    }
-
+    if (coordinates == null) return [];
     final points = <Offset>[];
-
     for (var coord in coordinates) {
       final lon = (coord[0] as num).toDouble();
       final lat = (coord[1] as num).toDouble();
       points.add(_latLonToMeters(lon, lat));
     }
-
     return points;
   }
 
   Offset _latLonToMeters(double lon, double lat) {
     const double metersPerDegreeLat = 111320.0;
     const double metersPerDegreeLon = 111320.0;
-
     final dx =
         (lon - baseLon) *
         metersPerDegreeLon *
         math.cos(baseLat * math.pi / 180);
     final dy = (lat - baseLat) * metersPerDegreeLat;
-
     return Offset(dx, dy);
   }
 
   bool _isObstacle(Offset point, {bool isGoal = false}) {
     final buffer = isGoal ? obstacleBuffer * 0.3 : obstacleBuffer;
-
     for (var obstacle in _obstacles) {
       if (obstacle.type == ObstacleType.polygon) {
-        if (_isPointInOrNearPolygon(point, obstacle.points, buffer)) {
+        if (_isPointInOrNearPolygon(point, obstacle.points, buffer))
           return true;
-        }
       } else if (obstacle.type == ObstacleType.line) {
-        if (_isPointNearPolyline(point, obstacle.points, buffer)) {
-          return true;
-        }
+        if (_isPointNearPolyline(point, obstacle.points, buffer)) return true;
       } else if (obstacle.type == ObstacleType.circle) {
         final center = obstacle.points.first;
         final distance = math.sqrt(
           math.pow(point.dx - center.dx, 2) + math.pow(point.dy - center.dy, 2),
         );
-        if (distance < obstacle.radius! + buffer) {
-          return true;
-        }
+        if (distance < obstacle.radius! + buffer) return true;
       }
     }
-
     return false;
   }
 
@@ -1986,10 +2223,7 @@ class Pathfinder {
     List<Offset> polygon,
     double buffer,
   ) {
-    if (polygon.length < 3) {
-      return false;
-    }
-
+    if (polygon.length < 3) return false;
     bool inside = false;
     for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
       if (((polygon[i].dy > point.dy) != (polygon[j].dy > point.dy)) &&
@@ -2001,19 +2235,12 @@ class Pathfinder {
         inside = !inside;
       }
     }
-
-    if (inside) {
-      return true;
-    }
-
+    if (inside) return true;
     for (int i = 0; i < polygon.length; i++) {
       final j = (i + 1) % polygon.length;
       final distance = _distanceToLineSegment(point, polygon[i], polygon[j]);
-      if (distance < buffer) {
-        return true;
-      }
+      if (distance < buffer) return true;
     }
-
     return false;
   }
 
@@ -2022,21 +2249,15 @@ class Pathfinder {
     List<Offset> polyline,
     double threshold,
   ) {
-    if (polyline.length < 2) {
-      return false;
-    }
-
+    if (polyline.length < 2) return false;
     for (int i = 0; i < polyline.length - 1; i++) {
       final distance = _distanceToLineSegment(
         point,
         polyline[i],
         polyline[i + 1],
       );
-      if (distance < threshold) {
-        return true;
-      }
+      if (distance < threshold) return true;
     }
-
     return false;
   }
 
@@ -2048,22 +2269,18 @@ class Pathfinder {
     final dx = lineEnd.dx - lineStart.dx;
     final dy = lineEnd.dy - lineStart.dy;
     final lengthSquared = dx * dx + dy * dy;
-
     if (lengthSquared == 0) {
       return math.sqrt(
         math.pow(point.dx - lineStart.dx, 2) +
             math.pow(point.dy - lineStart.dy, 2),
       );
     }
-
     final t =
         ((point.dx - lineStart.dx) * dx + (point.dy - lineStart.dy) * dy) /
         lengthSquared;
     final clampedT = t.clamp(0.0, 1.0);
-
     final projectionX = lineStart.dx + clampedT * dx;
     final projectionY = lineStart.dy + clampedT * dy;
-
     return math.sqrt(
       math.pow(point.dx - projectionX, 2) + math.pow(point.dy - projectionY, 2),
     );
@@ -2074,22 +2291,17 @@ class Pathfinder {
     if (_isObstacle(goal, isGoal: true)) {
       effectiveGoal = _findBestAccessiblePoint(goal) ?? goal;
     }
-
-    if (_isObstacle(start)) {
-      return null;
-    }
+    if (_isObstacle(start)) return null;
 
     final openSet = PriorityQueue<PathNode>((a, b) => a.f.compareTo(b.f));
     final closedSet = <Offset>{};
     final gScores = <Offset, double>{};
-
     final startNode = PathNode(
       start,
       null,
       0,
       _heuristic(start, effectiveGoal),
     );
-
     openSet.add(startNode);
     gScores[start] = 0;
 
@@ -2098,48 +2310,34 @@ class Pathfinder {
 
     while (openSet.isNotEmpty && iterations < maxIterations) {
       iterations++;
-
       final current = openSet.removeFirst();
-
       if (_distance(current.position, effectiveGoal) < goalTolerance) {
         final path = _reconstructPath(current);
-        if (_distance(path.last, goal) > 0.05) {
-          path.add(goal);
-        }
+        if (_distance(path.last, goal) > 0.05) path.add(goal);
         return _aggressiveSmoothing(path);
       }
-
       closedSet.add(current.position);
-
       for (var neighbor in _getNeighbors(current.position)) {
-        if (closedSet.contains(neighbor) || _isObstacle(neighbor)) {
-          continue;
-        }
-
+        if (closedSet.contains(neighbor) || _isObstacle(neighbor)) continue;
         final tentativeG = current.g + _distance(current.position, neighbor);
-
         if (!gScores.containsKey(neighbor) || tentativeG < gScores[neighbor]!) {
           gScores[neighbor] = tentativeG;
-
           final neighborNode = PathNode(
             neighbor,
             current,
             tentativeG,
             _heuristic(neighbor, effectiveGoal),
           );
-
           openSet.add(neighborNode);
         }
       }
     }
-
     return null;
   }
 
   Offset? _findBestAccessiblePoint(Offset goal) {
     const searchRadius = 0.6;
     const angleSteps = 32;
-
     for (double radius = 0.05; radius <= searchRadius; radius += 0.05) {
       for (int i = 0; i < angleSteps; i++) {
         final angle = (2 * math.pi * i) / angleSteps;
@@ -2147,102 +2345,76 @@ class Pathfinder {
           (goal.dx + radius * math.cos(angle)).clamp(0.0, roomWidth),
           (goal.dy + radius * math.sin(angle)).clamp(0.0, roomHeight),
         );
-
-        if (!_isObstacle(candidate, isGoal: true)) {
-          return candidate;
-        }
+        if (!_isObstacle(candidate, isGoal: true)) return candidate;
       }
     }
-
     return goal;
   }
 
   List<Offset> _getNeighbors(Offset position) {
     final neighbors = <Offset>[];
-
     for (var dx = -gridResolution; dx <= gridResolution; dx += gridResolution) {
       for (
         var dy = -gridResolution;
         dy <= gridResolution;
         dy += gridResolution
       ) {
-        if (dx == 0 && dy == 0) {
-          continue;
-        }
-
+        if (dx == 0 && dy == 0) continue;
         final neighbor = Offset(
           (position.dx + dx).clamp(0.0, roomWidth),
           (position.dy + dy).clamp(0.0, roomHeight),
         );
-
         neighbors.add(neighbor);
       }
     }
-
     return neighbors;
   }
 
-  double _heuristic(Offset a, Offset b) {
-    return math.sqrt(math.pow(a.dx - b.dx, 2) + math.pow(a.dy - b.dy, 2));
-  }
+  double _heuristic(Offset a, Offset b) =>
+      math.sqrt(math.pow(a.dx - b.dx, 2) + math.pow(a.dy - b.dy, 2));
 
-  double _distance(Offset a, Offset b) {
-    return math.sqrt(math.pow(a.dx - b.dx, 2) + math.pow(a.dy - b.dy, 2));
-  }
+  double _distance(Offset a, Offset b) =>
+      math.sqrt(math.pow(a.dx - b.dx, 2) + math.pow(a.dy - b.dy, 2));
 
   List<Offset> _reconstructPath(PathNode node) {
     final path = <Offset>[];
     PathNode? current = node;
-
     while (current != null) {
       path.add(current.position);
       current = current.parent;
     }
-
     return path.reversed.toList();
   }
 
   List<Offset> _aggressiveSmoothing(List<Offset> path) {
-    if (path.length <= 2) {
-      return path;
-    }
-
+    if (path.length <= 2) return path;
     final smoothed = <Offset>[path.first];
     int i = 0;
-
     while (i < path.length - 1) {
       int farthest = i + 1;
-
       for (int j = path.length - 1; j > i + 1; j--) {
         if (_hasLineOfSight(path[i], path[j])) {
           farthest = j;
           break;
         }
       }
-
       smoothed.add(path[farthest]);
       i = farthest;
     }
-
     return smoothed;
   }
 
   bool _hasLineOfSight(Offset start, Offset end) {
     final distance = _distance(start, end);
     final steps = (distance / (gridResolution * 0.5)).ceil();
-
     for (int i = 0; i <= steps; i++) {
       final t = i / steps;
       final point = Offset(
         start.dx + (end.dx - start.dx) * t,
         start.dy + (end.dy - start.dy) * t,
       );
-
-      if (_isObstacle(point)) {
-        return false;
-      }
+      if (_isObstacle(point)) return false;
     }
-
     return true;
   }
 }
@@ -2268,15 +2440,12 @@ class PriorityQueue<E> {
     _elements.sort(_comparator);
   }
 
-  E removeFirst() {
-    return _elements.removeAt(0);
-  }
-
+  E removeFirst() => _elements.removeAt(0);
   bool get isNotEmpty => _elements.isNotEmpty;
   bool get isEmpty => _elements.isEmpty;
 }
 
-// ✅ StaticMapCanvas - KEY FIX HERE!
+// ✅ StaticMapCanvas - Optimized rendering
 class StaticMapCanvas extends CustomPainter {
   StaticMapCanvas({
     required this.roomWidth,
@@ -2308,15 +2477,9 @@ class StaticMapCanvas extends CustomPainter {
   double baseLon = 3.92162187466;
 
   Color _getAccuracyColor(double error) {
-    if (error < 0.3) {
-      return const Color(0xFF10b981);
-    }
-    if (error < 0.7) {
-      return const Color(0xFF84cc16);
-    }
-    if (error < 1.2) {
-      return const Color(0xFFf59e0b);
-    }
+    if (error < 0.3) return const Color(0xFF10b981);
+    if (error < 0.7) return const Color(0xFF84cc16);
+    if (error < 1.2) return const Color(0xFFf59e0b);
     return const Color(0xFFef4444);
   }
 
@@ -2331,13 +2494,11 @@ class StaticMapCanvas extends CustomPainter {
   Offset _latLonToMeters(double lon, double lat) {
     const double metersPerDegreeLat = 111320.0;
     const double metersPerDegreeLon = 111320.0;
-
     final dx =
         (lon - baseLon) *
         metersPerDegreeLon *
         math.cos(baseLat * math.pi / 180);
     final dy = (lat - baseLat) * metersPerDegreeLat;
-
     return Offset(dx, dy);
   }
 
@@ -2368,34 +2529,33 @@ class StaticMapCanvas extends CustomPainter {
       ..strokeWidth = 3;
     canvas.drawCircle(pixelPosition, 8, borderPaint);
 
-    // final textSpan = TextSpan(
-    //   text:
-    //       'Cart\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
-    //   style: TextStyle(
-    //     color: Colors.white,
-    //     fontSize: 10,
-    //     fontWeight: FontWeight.w600,
-    //     backgroundColor: color.withValues(alpha: 0.9),
-    //     height: 1.4,
-    //   ),
-    // );
+    final textSpan = TextSpan(
+      text:
+          'Cart\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        backgroundColor: color.withValues(alpha: 0.9),
+        height: 1.4,
+      ),
+    );
 
-    // final textPainter = TextPainter(
-    //   text: textSpan,
-    //   textAlign: TextAlign.center,
-    //   textDirection: TextDirection.ltr,
-    // );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    );
 
-    // textPainter.layout(minWidth: 0, maxWidth: 110);
-    // textPainter.paint(
-    //   canvas,
-    //   Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
-    // );
+    textPainter.layout(minWidth: 0, maxWidth: 110);
+    textPainter.paint(
+      canvas,
+      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
+    );
   }
 
   void _drawPinpoint(Canvas canvas, String id, Offset position) {
     final pixelPosition = _metersToCanvasOffset(position.dx, position.dy);
-
     final path = Path();
     path.moveTo(pixelPosition.dx, pixelPosition.dy);
     path.quadraticBezierTo(
@@ -2422,7 +2582,6 @@ class StaticMapCanvas extends CustomPainter {
       20,
       20,
     );
-
     final gradient = LinearGradient(
       colors: [Colors.green.shade600, Colors.green.shade300],
       begin: Alignment.topCenter,
@@ -2432,7 +2591,6 @@ class StaticMapCanvas extends CustomPainter {
     final pinPaint = Paint()
       ..shader = gradient.createShader(rect)
       ..style = PaintingStyle.fill;
-
     final pinBorderPaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
@@ -2444,52 +2602,45 @@ class StaticMapCanvas extends CustomPainter {
     final circlePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.fill;
-
     canvas.drawCircle(
       Offset(pixelPosition.dx, pixelPosition.dy - 20),
       5,
       circlePaint,
     );
 
-    // final textSpan = TextSpan(
-    //   text: id,
-    //   style: const TextStyle(
-    //     color: Colors.white,
-    //     fontSize: 11,
-    //     fontWeight: FontWeight.bold,
-    //     backgroundColor: Color(0xFF1f2937),
-    //   ),
-    // );
+    final textSpan = TextSpan(
+      text: id,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        backgroundColor: Color(0xFF1f2937),
+      ),
+    );
 
-    // final textPainter = TextPainter(
-    //   text: textSpan,
-    //   textAlign: TextAlign.center,
-    //   textDirection: TextDirection.ltr,
-    // );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    );
 
-    // textPainter.layout(minWidth: 0, maxWidth: 80);
-    // textPainter.paint(
-    //   canvas,
-    //   Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
-    // );
+    textPainter.layout(minWidth: 0, maxWidth: 80);
+    textPainter.paint(
+      canvas,
+      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
+    );
   }
 
-  // ✅ KEY FIX: Only displayed path is colorized!
   void _drawPath(
     Canvas canvas,
     List<Offset> path,
     Color color,
     bool isDisplayed,
   ) {
-    if (path.length < 2) {
-      return;
-    }
-
-    // ✅ If NOT displayed = transparent gray, otherwise full color
+    if (path.length < 2) return;
     final pathColor = isDisplayed
         ? color
-        : const Color(0xFF9CA3AF).withValues(alpha: 0.2); // Transparent gray
-
+        : const Color(0xFF9CA3AF).withValues(alpha: 0.2);
     final strokeWidth = isDisplayed ? 5.0 : 3.0;
 
     final paint = Paint()
@@ -2501,10 +2652,8 @@ class StaticMapCanvas extends CustomPainter {
 
     final pathToDraw = Path();
     bool first = true;
-
     for (var point in path) {
       final pixel = _metersToCanvasOffset(point.dx, point.dy);
-
       if (first) {
         pathToDraw.moveTo(pixel.dx, pixel.dy);
         first = false;
@@ -2521,21 +2670,17 @@ class StaticMapCanvas extends CustomPainter {
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-
       canvas.drawPath(pathToDraw, shadowPaint);
     }
 
     canvas.drawPath(pathToDraw, paint);
 
-    // ✅ Only draw arrows on displayed path
     if (isDisplayed) {
       final numArrows = 6;
       final arrowSpacing = 1.0 / numArrows;
-
       for (int i = 0; i < numArrows; i++) {
         final baseProgress = i * arrowSpacing;
         final animatedProgress = (baseProgress + animationValue) % 1.0;
-
         _drawFlowingArrow(canvas, path, animatedProgress, color);
       }
     }
@@ -2547,13 +2692,9 @@ class StaticMapCanvas extends CustomPainter {
     double progress,
     Color color,
   ) {
-    if (path.length < 2) {
-      return;
-    }
-
+    if (path.length < 2) return;
     final totalLength = _calculatePathLength(path);
     final targetLength = totalLength * progress;
-
     double currentLength = 0.0;
     Offset arrowPos = path.first;
     Offset nextPos = path[1];
@@ -2565,7 +2706,6 @@ class StaticMapCanvas extends CustomPainter {
         math.pow(segEnd.dx - segStart.dx, 2) +
             math.pow(segEnd.dy - segStart.dy, 2),
       );
-
       if (currentLength + segLength >= targetLength) {
         final segProgress = (targetLength - currentLength) / segLength;
         arrowPos = Offset(
@@ -2575,22 +2715,18 @@ class StaticMapCanvas extends CustomPainter {
         nextPos = segEnd;
         break;
       }
-
       currentLength += segLength;
     }
 
     final canvasPos = _metersToCanvasOffset(arrowPos.dx, arrowPos.dy);
     final canvasNext = _metersToCanvasOffset(nextPos.dx, nextPos.dy);
-
     final dx = canvasNext.dx - canvasPos.dx;
     final dy = canvasNext.dy - canvasPos.dy;
     final angle = math.atan2(dy, dx);
-
     final arrowSize = 12.0;
     final arrowWidth = math.pi / 6;
 
     final arrowPath = Path();
-
     arrowPath.moveTo(canvasPos.dx, canvasPos.dy);
     arrowPath.lineTo(
       canvasPos.dx - arrowSize * math.cos(angle - arrowWidth),
@@ -2623,14 +2759,9 @@ class StaticMapCanvas extends CustomPainter {
   }
 
   void _renderGeoJsonFeatures(Canvas canvas) {
-    if (geoJsonData == null) {
-      return;
-    }
-
+    if (geoJsonData == null) return;
     final features = geoJsonData!['features'] as List?;
-    if (features == null) {
-      return;
-    }
+    if (features == null) return;
 
     for (var feature in features) {
       final properties = feature['properties'] as Map<String, dynamic>?;
@@ -2644,11 +2775,7 @@ class StaticMapCanvas extends CustomPainter {
     for (var feature in features) {
       final geometry = feature['geometry'];
       final properties = feature['properties'] as Map<String, dynamic>?;
-
-      if (geometry == null) {
-        continue;
-      }
-
+      if (geometry == null) continue;
       final geometryType = geometry['type'] as String?;
       final amenity = properties?['amenity'] as String?;
 
@@ -2672,9 +2799,7 @@ class StaticMapCanvas extends CustomPainter {
     String? amenity,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.length < 2) {
-      return;
-    }
+    if (coordinates == null || coordinates.length < 2) return;
 
     final paint = Paint()
       ..color = amenity == 'wall'
@@ -2686,13 +2811,11 @@ class StaticMapCanvas extends CustomPainter {
 
     final path = Path();
     bool first = true;
-
     for (var coord in coordinates) {
       final lon = (coord[0] as num).toDouble();
       final lat = (coord[1] as num).toDouble();
       final meters = _latLonToMeters(lon, lat);
       final pixel = _metersToCanvasOffset(meters.dx, meters.dy);
-
       if (first) {
         path.moveTo(pixel.dx, pixel.dy);
         first = false;
@@ -2700,7 +2823,6 @@ class StaticMapCanvas extends CustomPainter {
         path.lineTo(pixel.dx, pixel.dy);
       }
     }
-
     canvas.drawPath(path, paint);
   }
 
@@ -2711,14 +2833,9 @@ class StaticMapCanvas extends CustomPainter {
     Map<String, dynamic>? properties,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.isEmpty) {
-      return;
-    }
-
+    if (coordinates == null || coordinates.isEmpty) return;
     final ring = coordinates[0] as List;
-    if (ring.length < 3) {
-      return;
-    }
+    if (ring.length < 3) return;
 
     Color fillColor = const Color(0xFFe5e7eb);
     Color strokeColor = Colors.transparent;
@@ -2739,13 +2856,11 @@ class StaticMapCanvas extends CustomPainter {
 
     final path = Path();
     bool first = true;
-
     for (var coord in ring) {
       final lon = (coord[0] as num).toDouble();
       final lat = (coord[1] as num).toDouble();
       final meters = _latLonToMeters(lon, lat);
       final pixel = _metersToCanvasOffset(meters.dx, meters.dy);
-
       if (first) {
         path.moveTo(pixel.dx, pixel.dy);
         first = false;
@@ -2758,7 +2873,6 @@ class StaticMapCanvas extends CustomPainter {
     final fillPaint = Paint()
       ..color = fillColor
       ..style = PaintingStyle.fill;
-
     final strokePaint = Paint()
       ..color = strokeColor
       ..strokeWidth = 2.5
@@ -2775,9 +2889,7 @@ class StaticMapCanvas extends CustomPainter {
     Map<String, dynamic>? properties,
   ) {
     final coordinates = geometry['coordinates'] as List?;
-    if (coordinates == null || coordinates.length < 2) {
-      return;
-    }
+    if (coordinates == null || coordinates.length < 2) return;
 
     final lon = (coordinates[0] as num).toDouble();
     final lat = (coordinates[1] as num).toDouble();
@@ -2795,7 +2907,6 @@ class StaticMapCanvas extends CustomPainter {
       final circlePaint = Paint()
         ..color = const Color(0xFFc084fc).withValues(alpha: 0.3)
         ..style = PaintingStyle.fill;
-
       final borderPaint = Paint()
         ..color = const Color(0xFFa855f7)
         ..strokeWidth = 2.5
@@ -2807,7 +2918,6 @@ class StaticMapCanvas extends CustomPainter {
       final labelPaint = Paint()
         ..color = const Color(0xFF1f2937)
         ..style = PaintingStyle.fill;
-
       canvas.drawCircle(pixel, 6, labelPaint);
 
       if (properties?['name'] != null) {
@@ -2893,7 +3003,6 @@ class StaticMapCanvas extends CustomPainter {
       const Color(0xFF14b8a6),
     ];
 
-    // ✅ Draw all paths, but only displayed one is colorized
     int colorIndex = 0;
     for (var entry in computedPaths.entries) {
       if (!hiddenProductPaths.contains(entry.key)) {
@@ -2910,8 +3019,8 @@ class StaticMapCanvas extends CustomPainter {
 
     for (var product in productsLocation) {
       final id = product.id;
-      final x = product.coordinates["x"] ?? 0.0;
-      final y = product.coordinates["y"] ?? 0.0;
+      final x = product.coordinates['x'] ?? 0.0;
+      final y = product.coordinates['y'] ?? 0.0;
       final position = Offset(x, y);
       _drawPinpoint(canvas, id, position);
     }
@@ -2922,12 +3031,9 @@ class StaticMapCanvas extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant StaticMapCanvas oldDelegate) {
-    return true;
-  }
+  bool shouldRepaint(covariant StaticMapCanvas oldDelegate) => true;
 }
 
-// ✅ ANCHOR CLASS
 class Anchor {
   String id;
   Size size;
@@ -2967,7 +3073,7 @@ class Anchor {
   }
 }
 
-// ✅ MULTILATERATION CLASS
+// ✅ FINAL: Freeze-free Multilateration
 class Multilateration {
   List<Anchor> anchors;
   final double roomWidth;
@@ -2982,13 +3088,10 @@ class Multilateration {
   });
 
   Map<String, dynamic>? calcUserLocation() {
-    if (anchors.length < 3) {
-      return null;
-    }
+    if (anchors.length < 3) return null;
 
     try {
       final cleanedAnchors = _removeOutliers(anchors);
-
       if (cleanedAnchors.length < 3) {
         if (kDebugMode) {
           debugPrint('⚠️ Not enough valid anchors after outlier removal');
@@ -2998,8 +3101,9 @@ class Multilateration {
 
       Offset? position = _weightedLeastSquares(cleanedAnchors);
 
+      // ✅ Enhanced smoothing
       if (position != null && previousPosition != null) {
-        position = _applyLightSmoothing(position, previousPosition!);
+        position = _applyEnhancedSmoothing(position, previousPosition!);
       }
 
       if (position == null || !position.dx.isFinite || !position.dy.isFinite) {
@@ -3018,32 +3122,22 @@ class Multilateration {
   }
 
   List<Anchor> _removeOutliers(List<Anchor> allAnchors) {
-    if (allAnchors.length <= 3) {
-      return allAnchors;
-    }
+    if (allAnchors.length <= 3) return allAnchors;
 
     final List<Anchor> cleaned = [];
-
     for (var anchor in allAnchors) {
       int consistentCount = 0;
-
       for (var other in allAnchors) {
-        if (anchor.id == other.id) {
-          continue;
-        }
-
+        if (anchor.id == other.id) continue;
         final anchorDist = math.sqrt(
           math.pow(anchor.x - other.x, 2) + math.pow(anchor.y - other.y, 2),
         );
-
         final minDist = (anchor.distance - other.distance).abs();
         final maxDist = anchor.distance + other.distance;
-
         if (anchorDist >= minDist - 0.5 && anchorDist <= maxDist + 0.5) {
           consistentCount++;
         }
       }
-
       if (consistentCount >= (allAnchors.length / 2)) {
         cleaned.add(anchor);
       } else {
@@ -3054,7 +3148,6 @@ class Multilateration {
         }
       }
     }
-
     return cleaned.isNotEmpty ? cleaned : allAnchors;
   }
 
@@ -3071,29 +3164,20 @@ class Multilateration {
       List<double> weights = [];
 
       for (var anchor in validAnchors) {
-        if (anchor.distance <= 0) {
-          continue;
-        }
-
+        if (anchor.distance <= 0) continue;
         double dx = x - anchor.x;
         double dy = y - anchor.y;
         double dist = math.sqrt(dx * dx + dy * dy);
-
-        if (dist < 0.01) {
-          dist = 0.01;
-        }
+        if (dist < 0.01) dist = 0.01;
 
         double residual = dist - anchor.distance;
         r.add(residual);
         J.add([dx / dist, dy / dist]);
-
         double weight = 1.0 / (1.0 + anchor.distance);
         weights.add(weight);
       }
 
-      if (J.isEmpty) {
-        return null;
-      }
+      if (J.isEmpty) return null;
 
       double jtJ00 = 0, jtJ01 = 0, jtJ11 = 0;
       for (int i = 0; i < J.length; i++) {
@@ -3111,9 +3195,7 @@ class Multilateration {
       }
 
       double det = jtJ00 * jtJ11 - jtJ01 * jtJ01;
-      if (det.abs() < 1e-10) {
-        break;
-      }
+      if (det.abs() < 1e-10) break;
 
       double inv00 = jtJ11 / det;
       double inv01 = -jtJ01 / det;
@@ -3126,22 +3208,16 @@ class Multilateration {
       y = (y + deltaY).clamp(0.0, roomHeight);
 
       double stepSize = math.sqrt(deltaX * deltaX + deltaY * deltaY);
-      if (stepSize < convergenceThreshold) {
-        break;
-      }
+      if (stepSize < convergenceThreshold) break;
     }
 
     return Offset(x, y);
   }
 
   double _getInitialX(List<Anchor> validAnchors) {
-    if (previousPosition != null) {
-      return previousPosition!.dx;
-    }
-
+    if (previousPosition != null) return previousPosition!.dx;
     double weightedSum = 0;
     double totalWeight = 0;
-
     for (var anchor in validAnchors) {
       if (anchor.distance > 0) {
         double weight = 1.0 / (1.0 + anchor.distance);
@@ -3149,20 +3225,15 @@ class Multilateration {
         totalWeight += weight;
       }
     }
-
     return totalWeight > 0
         ? (weightedSum / totalWeight).clamp(0.0, roomWidth)
         : roomWidth / 2;
   }
 
   double _getInitialY(List<Anchor> validAnchors) {
-    if (previousPosition != null) {
-      return previousPosition!.dy;
-    }
-
+    if (previousPosition != null) return previousPosition!.dy;
     double weightedSum = 0;
     double totalWeight = 0;
-
     for (var anchor in validAnchors) {
       if (anchor.distance > 0) {
         double weight = 1.0 / (1.0 + anchor.distance);
@@ -3170,24 +3241,32 @@ class Multilateration {
         totalWeight += weight;
       }
     }
-
     return totalWeight > 0
         ? (weightedSum / totalWeight).clamp(0.0, roomHeight)
         : roomHeight / 2;
   }
 
-  Offset _applyLightSmoothing(Offset newPos, Offset prevPos) {
+  // ✅ FINAL: Enhanced smoothing - stable movement
+  Offset _applyEnhancedSmoothing(Offset newPos, Offset prevPos) {
     final distance = math.sqrt(
       math.pow(newPos.dx - prevPos.dx, 2) + math.pow(newPos.dy - prevPos.dy, 2),
     );
 
+    // ✅ Increased dead zone to 2cm (was 1.5cm)
+    if (distance < 0.02) return prevPos;
+
+    // ✅ SMOOTHER graduated alpha
     double alpha;
-    if (distance < 0.05) {
-      alpha = 0.4;
+    if (distance < 0.06) {
+      alpha = 0.20; // Very heavy smoothing
     } else if (distance < 0.15) {
+      alpha = 0.40;
+    } else if (distance < 0.30) {
+      alpha = 0.60;
+    } else if (distance < 0.50) {
       alpha = 0.75;
     } else {
-      alpha = 0.92;
+      alpha = 0.88;
     }
 
     return Offset(
@@ -3201,23 +3280,17 @@ class Multilateration {
     double totalWeight = 0;
 
     for (var anchor in validAnchors) {
-      if (anchor.distance <= 0) {
-        continue;
-      }
-
+      if (anchor.distance <= 0) continue;
       double dx = position.dx - anchor.x;
       double dy = position.dy - anchor.y;
       double calculatedDist = math.sqrt(dx * dx + dy * dy);
       double error = calculatedDist - anchor.distance;
-
       double weight = 1.0 / (1.0 + anchor.distance);
       sumWeightedSquaredError += weight * error * error;
       totalWeight += weight;
     }
 
-    if (totalWeight == 0) {
-      return 0;
-    }
+    if (totalWeight == 0) return 0;
     return math.sqrt(sumWeightedSquaredError / totalWeight);
   }
 }
