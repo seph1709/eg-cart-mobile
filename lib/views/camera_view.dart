@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -43,11 +44,14 @@ class _CameraViewState extends State<CameraView> {
                   final base64Bytes = result.barcodes.first.rawValue ?? "";
                   final decodedBytes = base64Decoder.convert(base64Bytes);
                   await Future.delayed(Duration(seconds: 2));
-                  print(utf8.decode(decodedBytes));
+                  if (kDebugMode) {
+                    print(utf8.decode(decodedBytes));
+                  }
                   if (utf8.decode(decodedBytes) == "egcart001") {
                     setState(() {
                       showLoading = false;
                     });
+                    // ignore: use_build_context_synchronously
                     context.replaceRoute(HomeView());
                   }
                 },

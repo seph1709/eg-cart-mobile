@@ -27,7 +27,6 @@ class Product {
   final String id;
   final String name;
   final String classification;
-  final int quantity;
   final bool available;
   final String supplier;
   final Map<String, double> coordinates;
@@ -44,12 +43,12 @@ class Product {
   final int minStockLevel;
   final int maxStockLevel;
   final int currentStockLevel;
+  final int rackLevel;
 
   Product({
     required this.id,
     required this.name,
     required this.classification,
-    required this.quantity,
     required this.available,
     required this.supplier,
     required this.coordinates,
@@ -66,12 +65,12 @@ class Product {
     required this.minStockLevel,
     required this.maxStockLevel,
     required this.currentStockLevel,
+    required this.rackLevel,
   });
   Product.fromJson(Map<String, dynamic> json)
     : id = json['id'],
       name = json['name'],
       classification = json['classification'],
-      quantity = json['quantity'],
       available = json['available'],
       supplier = json['supplier'],
       coordinates = Map<String, double>.from(json['coordinates']),
@@ -87,5 +86,6 @@ class Product {
       barcode = json['barcode'],
       minStockLevel = json['minStockLevel'],
       maxStockLevel = json['maxStockLevel'],
+      rackLevel = json['rackLevel'],
       currentStockLevel = json['currentStockLevel'];
 }

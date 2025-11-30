@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/models/product_model.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 @RoutePage()
@@ -13,7 +14,9 @@ class HistoryView extends StatefulWidget {
 class _HistoryViewState extends State<HistoryView> {
   @override
   Widget build(BuildContext context) {
-    print(Products.historyProducts);
+    if (kDebugMode) {
+      print(Products.historyProducts);
+    }
     return MaterialApp(
       home: Scaffold(
         backgroundColor: Colors.white,

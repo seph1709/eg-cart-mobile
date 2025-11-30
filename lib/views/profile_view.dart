@@ -1,4 +1,3 @@
-import 'package:auto_route/annotations.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
@@ -85,7 +84,7 @@ class _ProfileViewState extends State<ProfileView> {
                                     ),
                                   ),
                                   if (isEditing)
-                                    Container(
+                                    SizedBox(
                                       height: 30,
                                       width: 200,
                                       child: TextField(
@@ -199,36 +198,41 @@ class _ProfileViewState extends State<ProfileView> {
                     ),
                   ),
                   Divider(color: Colors.grey.shade300, height: 2),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        IntrinsicWidth(
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.info_outline_rounded,
-                                size: 30,
-                                color: Colors.grey.shade500,
-                              ),
-                              SizedBox(width: 15),
-                              Text(
-                                "About",
-                                style: TextStyle(
-                                  color: Colors.grey.shade800,
-                                  fontSize: 17,
+                  InkWell(
+                    onTap: () {
+                      context.pushRoute(AboutView());
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IntrinsicWidth(
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  size: 30,
+                                  color: Colors.grey.shade500,
                                 ),
-                              ),
-                            ],
+                                SizedBox(width: 15),
+                                Text(
+                                  "About",
+                                  style: TextStyle(
+                                    color: Colors.grey.shade800,
+                                    fontSize: 17,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        Icon(
-                          Icons.arrow_forward_ios_sharp,
-                          color: Colors.green.shade600,
-                          size: 18,
-                        ),
-                      ],
+                          Icon(
+                            Icons.arrow_forward_ios_sharp,
+                            color: Colors.green.shade600,
+                            size: 18,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   Divider(color: Colors.grey.shade300, height: 2),

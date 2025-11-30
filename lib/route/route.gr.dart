@@ -22,7 +22,7 @@ import 'package:egcart_mobile/views/map_view.dart' as _i8;
 import 'package:egcart_mobile/views/ordered_history_view.dart' as _i9;
 import 'package:egcart_mobile/views/product_details_view.dart' as _i10;
 import 'package:egcart_mobile/views/profile_view.dart' as _i11;
-import 'package:egcart_mobile/views/Scan_view.dart' as _i12;
+import 'package:egcart_mobile/views/scan_view.dart' as _i12;
 import 'package:egcart_mobile/views/search_view.dart' as _i13;
 import 'package:flutter/material.dart' as _i15;
 

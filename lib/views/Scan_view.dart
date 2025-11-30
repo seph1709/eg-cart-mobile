@@ -2,7 +2,6 @@ import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:get/get.dart';
 

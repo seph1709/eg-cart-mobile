@@ -115,7 +115,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
                     child: Row(
                       children: [
                         Icon(
-                          Icons.info,
+                          Icons.person_3_sharp,
                           color: c.indexNavigationBar == 2
                               ? Colors.green[600]
                               : Colors.grey[400],
@@ -123,7 +123,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
                         ),
                         SizedBox(width: 4),
                         Text(
-                          "About",
+                          "Profile",
                           style: TextStyle(
                             color: c.indexNavigationBar == 2
                                 ? Colors.green[600]

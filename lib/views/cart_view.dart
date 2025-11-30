@@ -4,6 +4,7 @@ import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:egcart_mobile/views/widgets/bottom_navbar.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -23,7 +24,9 @@ class _CartViewState extends State<CartView> {
 
   @override
   Widget build(BuildContext context) {
-    print("countProd: ${CartProducts.countPerProduct}");
+    if (kDebugMode) {
+      print("countProd: ${CartProducts.countPerProduct}");
+    }
     return MaterialApp(
       home: Scaffold(
         backgroundColor: Colors.grey[50],

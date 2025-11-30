@@ -38,11 +38,15 @@ class SupabaseController extends GetxController {
           .values
           .first;
 
-      print("count: $count for $id");
+      if (kDebugMode) {
+        print("count: $count for $id");
+      }
 
       productsPricesFromCart.add(getRealPrice(discount, price) * count);
     }
-    print("prices $productsPricesFromCart");
+    if (kDebugMode) {
+      print("prices $productsPricesFromCart");
+    }
 
     final reduced = productsPricesFromCart.reduce(
       (value, element) => value + element,
