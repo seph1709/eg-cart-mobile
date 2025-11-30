@@ -34,6 +34,7 @@ class AppRouter extends RootStackRouter {
       transitionsBuilder: TransitionsBuilders.noTransition,
     ),
     AutoRoute(page: SearchView.page),
+    AutoRoute(page: HistoryView.page),
     AutoRoute(page: ProductDetailsView.page),
     AutoRoute(page: CategoryView.page),
     AutoRoute(page: EditNameView.page),

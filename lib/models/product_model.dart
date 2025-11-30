@@ -2,6 +2,7 @@ import 'dart:convert';
 
 class Products {
   static List<Product> products = [];
+  static List<Product> historyProducts = [];
 }
 
 class ProductsByCategory {

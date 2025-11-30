@@ -13,7 +13,13 @@ import 'package:get/get.dart';
 class ProductDetailsView extends StatefulWidget {
   final Product selectedProduct;
 
-  const ProductDetailsView({super.key, required this.selectedProduct});
+  final bool fromMapView;
+
+  const ProductDetailsView({
+    super.key,
+    required this.selectedProduct,
+    this.fromMapView = false,
+  });
 
   @override
   State<ProductDetailsView> createState() => _ProductDetailsViewState();
@@ -35,6 +41,12 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.selectedProduct.id ==
+        Get.find<SupabaseController>().prioritizedProductId) {
+      Get.find<SupabaseController>().prioritizedProductId = null;
+      Get.find<SupabaseController>().update();
+    }
+
     if (CartProducts.products.contains(widget.selectedProduct)) {
       isAddedInTheCart = true;
     } else {
@@ -60,7 +72,11 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
           backgroundColor: Colors.grey[50],
           title: GestureDetector(
             onTap: () {
-              context.back();
+              if (CartProducts.products.isEmpty && widget.fromMapView) {
+                context.replaceRoute(CartView());
+              } else {
+                context.back();
+              }
             },
             child: Row(
               children: [
@@ -238,7 +254,8 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                                                         });
                                                   }
                                                 }
-                                                   Get.find<SupabaseController>().update();
+                                                Get.find<SupabaseController>()
+                                                    .update();
                                               });
                                             },
                                             icon: Icon(
@@ -393,6 +410,10 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                                   CartProducts.countPerProduct.add({
                                     widget.selectedProduct: counter,
                                   });
+
+                                  Products.historyProducts.add(
+                                    widget.selectedProduct,
+                                  );
                                   Get.find<SupabaseController>().update();
                                 }
                               });

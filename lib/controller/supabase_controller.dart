@@ -9,6 +9,9 @@ class SupabaseController extends GetxController {
   int indexNavigationBar = 0;
 
   String? prioritizedProductId;
+  final Set<String> hiddenProductPaths = {};
+
+  String username = 'User';
 
   @override
   void onInit() {
