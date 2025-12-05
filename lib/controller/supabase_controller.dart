@@ -1,4 +1,5 @@
 import 'package:egcart_mobile/models/product_model.dart';
+import 'package:egcart_mobile/models/uwb_model.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
@@ -23,6 +24,8 @@ class SupabaseController extends GetxController {
   void onReady() {
     super.onReady();
     getFeaturedProducts();
+    getUwbIP();
+    getGeoJson();
   }
 
   String getTotal() {
@@ -110,6 +113,83 @@ class SupabaseController extends GetxController {
       if (kDebugMode) {
         print(e);
       }
+    }
+  }
+
+  Future<void> getUwbIP() async {
+    try {
+      final response = await supabaseClient
+          .from('uwb_ip')
+          .select("*")
+          .eq('id', "01");
+
+      UwbContent.ipAdress = response.first["ip_address"] ?? "";
+      UwbContent.id = response.first["id"] ?? "";
+
+      update();
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+    }
+  }
+
+  Future<void> getGeoJson() async {
+    try {
+      final response = await supabaseClient
+          .from('geojson')
+          .select("*")
+          .eq('id', "01");
+
+      UwbContent.geoJson = response.first["content"] ?? "";
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+    }
+  }
+
+  Future<bool> verifyQRcode(String cardId) async {
+    try {
+      final response = await supabaseClient
+          .from('uwb_ip')
+          .select("*")
+          .eq('card_id', cardId);
+
+      final isIpAdressExist = response.first["ip_address"] != null;
+      final ipIdExist = response.first["id"] != null;
+
+      print("validdd $response");
+
+      return isIpAdressExist && ipIdExist;
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+
+      print("returning from error $e");
+
+      return false;
+    }
+  }
+
+  Future<bool> verifyPinCode(int pinCode) async {
+    try {
+      final response = await supabaseClient
+          .from('uwb_ip')
+          .select("*")
+          .eq('pin_code', pinCode);
+
+      final isIpAdressExist = response.first["ip_address"] != null;
+      final ipIdExist = response.first["id"] != null;
+
+      return isIpAdressExist && ipIdExist;
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+
+      return false;
     }
   }
 }

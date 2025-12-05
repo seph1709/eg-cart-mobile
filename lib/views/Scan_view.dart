@@ -19,6 +19,7 @@ class _ScanViewState extends State<ScanView> {
   final textEditingController = TextEditingController();
   @override
   Widget build(BuildContext context) {
+    final c = Get.find<SupabaseController>();
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(
@@ -91,9 +92,13 @@ class _ScanViewState extends State<ScanView> {
                           ),
                           width: 250,
                           child: TextField(
-                            onSubmitted: (value) {
-                              if (value == "161721") {
-                                context.replaceRoute(HomeView());
+                            onSubmitted: (value) async {
+                              var val = int.tryParse(value);
+                              if (val != null) {
+                                var isValid = await c.verifyPinCode(val);
+                                if (isValid) {
+                                  context.replaceRoute(HomeView());
+                                }
                               }
                             },
                             controller: textEditingController,

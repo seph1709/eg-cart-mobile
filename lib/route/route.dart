@@ -20,12 +20,12 @@ class AppRouter extends RootStackRouter {
     ),
     CustomRoute(
       page: HomeView.page,
-      initial: true,
+      initial: false,
       transitionsBuilder: TransitionsBuilders.noTransition,
     ),
     CustomRoute(
       page: ScanView.page,
-      initial: false,
+      initial: true,
       transitionsBuilder: TransitionsBuilders.noTransition,
     ),
     CustomRoute(
