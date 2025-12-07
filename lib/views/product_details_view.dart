@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/models/product_model.dart';
+import 'package:egcart_mobile/models/wishlist_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart' as app_routes;
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +31,7 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
 
   var counter = 1;
   var isAddedInTheCart = false;
+  late bool isInWishlist;
 
   double getRealPrice(int discout, double price) {
     if (discout == 0) {
@@ -39,11 +41,50 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
     return price * decimal;
   }
 
+  void _toggleWishlist() {
+    String message;
+    Color snackBarColor;
+
+    if (isInWishlist) {
+      Wishlist.removeItem(widget.selectedProduct.id);
+      message = 'Removed from wishlist';
+      snackBarColor = Colors.red[600]!;
+    } else {
+      final wishlistItem = WishlistItem(
+        id: widget.selectedProduct.id,
+        productId: widget.selectedProduct.id,
+        productName: widget.selectedProduct.name,
+        price: widget.selectedProduct.price,
+        image: widget.selectedProduct.image,
+        supplier: widget.selectedProduct.supplier,
+        discount: widget.selectedProduct.discount,
+        dateAdded: DateTime.now(),
+      );
+      Wishlist.addItem(wishlistItem);
+      message = 'Added to wishlist';
+      snackBarColor = Colors.green[600]!;
+    }
+
+    setState(() {
+      isInWishlist = !isInWishlist;
+      Get.find<SupabaseController>().saveLocalData();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: snackBarColor,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   var listSameCatProd = [];
 
   @override
   initState() {
     super.initState();
+    isInWishlist = Wishlist.isInWishlist(widget.selectedProduct.id);
 
     Get.find<SupabaseController>()
         .getProductsByCategory(widget.selectedProduct.category)
@@ -445,7 +486,7 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                         child: Container(
                           width: 55,
                           height: 50,
-                          margin: EdgeInsets.only(right: 18, left: 18),
+                          margin: EdgeInsets.only(right: 8, left: 18),
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.grey[300]!),
                             borderRadius: BorderRadius.all(Radius.circular(10)),
@@ -455,6 +496,33 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                             Icons.shopping_cart_outlined,
                             color: Colors.green[600],
                             size: 28,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: _toggleWishlist,
+                        child: Container(
+                          width: 55,
+                          height: 50,
+                          margin: EdgeInsets.only(right: 18, left: 8),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: isInWishlist
+                                  ? Colors.red[600]!
+                                  : Colors.grey[300]!,
+                            ),
+                            borderRadius: BorderRadius.all(Radius.circular(10)),
+                            color: isInWishlist ? Colors.red[50] : Colors.white,
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(
+                            isInWishlist
+                                ? Icons.favorite
+                                : Icons.favorite_outline,
+                            color: isInWishlist
+                                ? Colors.red[600]
+                                : Colors.grey[500],
+                            size: 26,
                           ),
                         ),
                       ),
@@ -486,9 +554,15 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                                     widget.selectedProduct: counter,
                                   });
 
-                                  Products.historyProducts.add(
-                                    widget.selectedProduct,
-                                  );
+                                  // Only add to history when actually added to cart
+                                  // and avoid duplicates (compare by id).
+                                  if (!Products.historyProducts.any(
+                                    (p) => p.id == widget.selectedProduct.id,
+                                  )) {
+                                    Products.historyProducts.add(
+                                      widget.selectedProduct,
+                                    );
+                                  }
                                   Get.find<SupabaseController>()
                                       .saveLocalData();
                                   Get.find<SupabaseController>().update();

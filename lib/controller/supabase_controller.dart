@@ -30,6 +30,9 @@ class SupabaseController extends GetxController {
 
   String privacyPolicy = "";
 
+  /// Persisted map of announcement id -> read state
+  Map<String, bool> announcementsRead = {};
+
   @override
   void onInit() {
     super.onInit();
@@ -53,6 +56,17 @@ class SupabaseController extends GetxController {
     try {
       username = prefs.getString('username') ?? "user";
       var prodHistory = prefs.getString('products_history');
+      var announcementsReadStr = prefs.getString('announcements_read');
+
+      if (announcementsReadStr != null) {
+        try {
+          final decoded =
+              jsonDecode(announcementsReadStr) as Map<String, dynamic>;
+          announcementsRead = decoded.map((k, v) => MapEntry(k, v == true));
+        } catch (e) {
+          announcementsRead = {};
+        }
+      }
 
       if (prodHistory != null) {
         Products.prodHistfromJson(jsonDecode(prodHistory));
@@ -68,15 +82,38 @@ class SupabaseController extends GetxController {
     try {
       await prefs.setString('username', username);
 
+      // Ensure history is deduplicated before saving
+      try {
+        Products.deduplicateHistory();
+      } catch (_) {}
+
       await prefs.setString(
         'products_history',
         jsonEncode(Product.toJson(Products.historyProducts)),
       );
+      // persist announcement read map
+      try {
+        await prefs.setString(
+          'announcements_read',
+          jsonEncode(announcementsRead),
+        );
+      } catch (e) {
+        if (kDebugMode) {
+          print('Failed to save announcements_read: $e');
+        }
+      }
     } catch (e) {
       if (kDebugMode) {
         print("errrrorr $e");
       }
     }
+  }
+
+  /// Mark an announcement as read/unread and persist immediately
+  Future<void> markAnnouncementRead(String id, bool isRead) async {
+    announcementsRead[id] = isRead;
+    await saveLocalData();
+    update();
   }
 
   String getTotal() {

@@ -6,6 +6,22 @@ class Products {
     for (var prod in json) {
       historyProducts.add(Product.fromJson(prod));
     }
+    // Ensure history doesn't contain duplicate products (keep first occurrence)
+    deduplicateHistory();
+  }
+
+  /// Remove duplicate products in `historyProducts` based on `id`.
+  /// Keeps the first occurrence of each product id.
+  static void deduplicateHistory() {
+    final seen = <String>{};
+    final unique = <Product>[];
+    for (var p in historyProducts) {
+      if (!seen.contains(p.id)) {
+        seen.add(p.id);
+        unique.add(p);
+      }
+    }
+    historyProducts = unique;
   }
 }
 

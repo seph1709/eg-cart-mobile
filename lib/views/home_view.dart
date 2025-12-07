@@ -1,8 +1,9 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
+import 'package:egcart_mobile/models/announcement_model.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
-
+import 'package:egcart_mobile/views/widgets/announcement_widget.dart';
 import 'package:egcart_mobile/views/widgets/bottom_navbar.dart';
 import 'package:egcart_mobile/views/widgets/catergory_card_widget.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
@@ -11,8 +12,84 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 @RoutePage()
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({super.key});
+
+  @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
+  late List<Announcement> announcements;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize with sample announcements
+    announcements = [
+      Announcement(
+        id: '1',
+        title: 'Welcome to E-G Cart!',
+        description:
+            'Thank you for using our grocery delivery service. Get fresh produce delivered to your doorstep.',
+        createdAt: DateTime.now().subtract(Duration(hours: 2)),
+        isRead: false,
+      ),
+      Announcement(
+        id: '2',
+        title: 'Special Offer This Week',
+        description: '20% off on all vegetables. Use code FRESH20 at checkout.',
+        createdAt: DateTime.now().subtract(Duration(days: 1)),
+        isRead: false,
+      ),
+      Announcement(
+        id: '3',
+        title: 'New Products Available',
+        description: 'Check out our new selection of organic dairy products.',
+        createdAt: DateTime.now().subtract(Duration(days: 2)),
+        isRead: true,
+      ),
+    ];
+
+    // Apply persisted read states (if any) by asking controller to load local data
+    final controller = Get.find<SupabaseController>();
+    controller.getLocalData().then((_) {
+      final map = controller.announcementsRead;
+      if (map.isNotEmpty) {
+        setState(() {
+          announcements = announcements
+              .map((a) => a.copyWith(isRead: map[a.id] ?? a.isRead))
+              .toList();
+        });
+      }
+    });
+  }
+
+  void _handleAnnouncementTap(Announcement announcement) {
+    final index = announcements.indexOf(announcement);
+    if (index != -1) {
+      setState(() {
+        announcements[index] = announcement.copyWith(isRead: true);
+      });
+      // persist read state
+      Get.find<SupabaseController>().markAnnouncementRead(
+        announcement.id,
+        true,
+      );
+    }
+  }
+
+  void _showAnnouncements(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AnnouncementBottomSheet(
+        announcements: announcements,
+        onAnnouncementRead: _handleAnnouncementTap,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +130,6 @@ class HomeView extends StatelessWidget {
             appBar: AppBar(
               elevation: 0,
               shadowColor: Colors.transparent,
-              toolbarHeight: 0.0,
               scrolledUnderElevation: 0,
               systemOverlayStyle: SystemUiOverlayStyle(
                 statusBarColor: Colors.green[600],
@@ -61,37 +137,63 @@ class HomeView extends StatelessWidget {
                 systemNavigationBarColor: Colors.grey[50],
               ),
               backgroundColor: Colors.green[600],
-
-              // title: Row(
-              //   children: [
-              //     SizedBox(width: 8),
-              //     Text(
-              //       'E-G Cart',
-              //       style: TextStyle(
-              //         color: Colors.white,
-              //         fontSize: 20,
-              //         // fontWeight: FontWeight.bold,
-              //       ),
-              //     ),
-              //   ],
-              // ),
-              // actions: [
-              //   IconButton(
-              //     icon: Icon(Icons.notifications_outlined, color: Colors.white),
-              //     onPressed: () {
-              //       //
-              //     },
-              //   ),
-              //   IconButton(
-              //     icon: Icon(
-              //       Icons.account_circle_outlined,
-              //       color: Colors.white,
-              //     ),
-              //     onPressed: () {
-              //       //
-              //     },
-              //   ),
-              // ],
+              centerTitle: false,
+              title: Row(
+                children: [
+                  Icon(
+                    Icons.shopping_cart_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'E-G Cart',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                Stack(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.notifications_outlined,
+                        color: Colors.white,
+                      ),
+                      onPressed: () {
+                        _showAnnouncements(context);
+                      },
+                    ),
+                    if (announcements.where((a) => !a.isRead).isNotEmpty)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            announcements
+                                .where((a) => !a.isRead)
+                                .length
+                                .toString(),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
             ),
             body: SafeArea(
               child: SingleChildScrollView(
@@ -102,46 +204,42 @@ class HomeView extends StatelessWidget {
                     Container(
                       width: double.infinity,
                       padding: EdgeInsets.symmetric(
-                        vertical: 50,
+                        vertical: 32,
                         horizontal: 20,
                       ),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Colors.green[600]!, Colors.green[300]!],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                      ),
+                      decoration: BoxDecoration(color: Colors.green[600]),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Welcome',
+                            'Find Fresh Groceries',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 28,
+                              fontSize: 26,
                               fontWeight: FontWeight.bold,
+                              height: 1.2,
                             ),
                           ),
-                          SizedBox(height: 8),
+                          SizedBox(height: 12),
                           Text(
-                            'Find fresh groceries today!',
+                            'Browse our wide selection of fresh produce delivered to your door',
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 16,
+                              color: Colors.white.withOpacity(0.85),
+                              fontSize: 14,
+                              height: 1.5,
                             ),
                           ),
-                          SizedBox(height: 20),
+                          SizedBox(height: 24),
                           // Search Bar
                           Container(
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(14),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 8,
-                                  offset: Offset(0, 2),
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 12,
+                                  offset: Offset(0, 4),
                                 ),
                               ],
                             ),
@@ -152,13 +250,21 @@ class HomeView extends StatelessWidget {
                               child: TextField(
                                 enabled: false,
                                 decoration: InputDecoration(
-                                  hintText: 'Search for products...',
+                                  hintText: 'Search products...',
+                                  hintStyle: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 15,
+                                  ),
                                   prefixIcon: Icon(
-                                    Icons.search,
+                                    Icons.search_rounded,
                                     color: Colors.green[600],
+                                    size: 22,
                                   ),
                                   border: InputBorder.none,
-                                  contentPadding: EdgeInsets.all(16),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    vertical: 14,
+                                    horizontal: 4,
+                                  ),
                                 ),
                               ),
                             ),
@@ -167,7 +273,7 @@ class HomeView extends StatelessWidget {
                       ),
                     ),
 
-                    SizedBox(height: 24),
+                    SizedBox(height: 28),
 
                     // Categories Section
                     Padding(
@@ -179,11 +285,12 @@ class HomeView extends StatelessWidget {
                             'Shop by Category',
                             style: TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[800],
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey[900],
+                              letterSpacing: 0.3,
                             ),
                           ),
-                          SizedBox(height: 16),
+                          SizedBox(height: 14),
                           SizedBox(
                             height: 160,
                             child: ListView(
@@ -260,7 +367,7 @@ class HomeView extends StatelessWidget {
                       ),
                     ),
 
-                    SizedBox(height: 10),
+                    SizedBox(height: 28),
 
                     // Featured Products
                     Padding(
@@ -275,31 +382,33 @@ class HomeView extends StatelessWidget {
                                 'Featured Products',
                                 style: TextStyle(
                                   fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[800],
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey[900],
+                                  letterSpacing: 0.3,
                                 ),
                               ),
-                              TextButton(
-                                onPressed: () {},
+                              GestureDetector(
+                                onTap: () {},
                                 child: Text(
                                   'See All',
                                   style: TextStyle(
                                     color: Colors.green[600],
                                     fontWeight: FontWeight.w600,
+                                    fontSize: 14,
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                          SizedBox(height: 16),
+                          SizedBox(height: 14),
                           GridView.builder(
                             shrinkWrap: true,
                             physics: NeverScrollableScrollPhysics(),
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: 2,
-                                  crossAxisSpacing: 25,
-                                  mainAxisSpacing: 30,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 20,
                                   childAspectRatio: 0.8,
                                 ),
                             itemCount: 4,
@@ -322,9 +431,7 @@ class HomeView extends StatelessWidget {
                       ),
                     ),
 
-                    SizedBox(
-                      height: 50,
-                    ), // Bottom padding for floating action button
+                    SizedBox(height: 60), // Bottom padding for navigation bar
                   ],
                 ),
               ),
