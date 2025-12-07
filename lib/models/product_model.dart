@@ -1,8 +1,12 @@
-import 'dart:convert';
-
 class Products {
   static List<Product> products = [];
   static List<Product> historyProducts = [];
+
+  static prodHistfromJson(List<dynamic> json) {
+    for (var prod in json) {
+      historyProducts.add(Product.fromJson(prod));
+    }
+  }
 }
 
 class ProductsByCategory {
@@ -16,11 +20,6 @@ class SearchResults {
 class CartProducts {
   static List<Product> products = [];
   static List<Map<Product, int>> countPerProduct = [];
-
-  // Add a method to convert the list of products to JSON
-  static List<dynamic> getProductsToJson() {
-    return jsonDecode(products.toString());
-  }
 }
 
 class Product {
@@ -88,4 +87,62 @@ class Product {
       maxStockLevel = json['maxStockLevel'],
       rackLevel = json['rackLevel'],
       currentStockLevel = json['currentStockLevel'];
+
+  static List<Map<String, dynamic>> toJson(List<Product> products) {
+    List<Map<String, dynamic>> json = [];
+    for (var product in products) {
+      Map<String, dynamic> productMap = {
+        'available': product.available,
+        'barcode': product.barcode,
+        'brand': product.brand,
+        'category': product.category,
+        'classification': product.classification,
+        'coordinates': product.coordinates,
+        'currentStockLevel': product.currentStockLevel,
+        'dateAdded': product.dateAdded,
+        'description': product.description,
+        'discount': product.discount,
+        'expirationDate': product.expirationDate,
+        'id': product.id,
+        'image': product.image,
+        'maxStockLevel': product.maxStockLevel,
+        'minStockLevel': product.minStockLevel,
+        'name': product.name,
+        'price': product.price,
+        'rackLevel': product.rackLevel,
+        'supplier': product.supplier,
+        'weight': product.weight,
+      };
+
+      json.add(productMap);
+    }
+    return json;
+  }
+
+  static Map<String, dynamic> singleProdToJson(Product product) {
+    Map<String, dynamic> productMap = {
+      'available': product.available,
+      'barcode': product.barcode,
+      'brand': product.brand,
+      'category': product.category,
+      'classification': product.classification,
+      'coordinates': product.coordinates,
+      'currentStockLevel': product.currentStockLevel,
+      'dateAdded': product.dateAdded,
+      'description': product.description,
+      'discount': product.discount,
+      'expirationDate': product.expirationDate,
+      'id': product.id,
+      'image': product.image,
+      'maxStockLevel': product.maxStockLevel,
+      'minStockLevel': product.minStockLevel,
+      'name': product.name,
+      'price': product.price,
+      'rackLevel': product.rackLevel,
+      'supplier': product.supplier,
+      'weight': product.weight,
+    };
+
+    return productMap;
+  }
 }

@@ -41,6 +41,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: AboutView.page),
     AutoRoute(page: OrderedHistoryView.page),
     AutoRoute(page: CameraView.page),
+    AutoRoute(page: PrivacyPolicy.page),
   ];
   @override
   List<AutoRouteGuard> get guards => [

@@ -3,7 +3,7 @@ import 'dart:math';
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/models/product_model.dart';
-import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:egcart_mobile/route/route.gr.dart' as app_routes;
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -39,6 +39,25 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
     return price * decimal;
   }
 
+  var listSameCatProd = [];
+
+  @override
+  initState() {
+    super.initState();
+
+    Get.find<SupabaseController>()
+        .getProductsByCategory(widget.selectedProduct.category)
+        .then(
+          (val) => {
+            setState(() {
+              listSameCatProd = ProductsByCategory.products
+                  .where((prod) => prod.id != widget.selectedProduct.id)
+                  .toList();
+            }),
+          },
+        );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.selectedProduct.id ==
@@ -57,6 +76,7 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
         counter = product.values.first;
       }
     }
+
     return MaterialApp(
       home: Scaffold(
         backgroundColor: Colors.white,
@@ -70,28 +90,30 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
             statusBarIconBrightness: Brightness.dark,
           ),
           backgroundColor: Colors.grey[50],
-          title: GestureDetector(
-            onTap: () {
-              if (CartProducts.products.isEmpty && widget.fromMapView) {
-                context.replaceRoute(CartView());
-              } else {
-                context.back();
-              }
-            },
-            child: Row(
-              children: [
-                Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  size: 20,
-                  weight: 5,
-                  color: Colors.grey[800],
-                ),
-                SizedBox(width: 8),
-                Text(
-                  "Back",
-                  style: TextStyle(fontSize: 17, color: Colors.grey[800]),
-                ),
-              ],
+          title: IntrinsicWidth(
+            child: InkWell(
+              onTap: () {
+                if (CartProducts.products.isEmpty && widget.fromMapView) {
+                  context.replaceRoute(app_routes.CartView());
+                } else {
+                  context.back();
+                }
+              },
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    size: 20,
+                    weight: 5,
+                    color: Colors.grey[800],
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    "Back",
+                    style: TextStyle(fontSize: 17, color: Colors.grey[800]),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -330,7 +352,7 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                             ),
                           ),
                           Container(
-                            margin: EdgeInsets.only(right: 18, bottom: 150),
+                            margin: EdgeInsets.only(right: 18, bottom: 20),
                             child: Text(
                               widget.selectedProduct.description,
                               style: TextStyle(
@@ -340,6 +362,57 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                               textAlign: TextAlign.justify,
                             ),
                           ),
+                          if (listSameCatProd.isNotEmpty)
+                            Container(
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.only(
+                                bottom: 10,
+                                top: 20,
+                              ),
+                              child: Text(
+                                "You might also like",
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[800],
+                                ),
+                              ),
+                            ),
+                          if (listSameCatProd.isNotEmpty)
+                            SizedBox(
+                              height: 200,
+                              width: MediaQuery.of(context).size.width,
+                              child: ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: listSameCatProd.length,
+                                itemBuilder: (context, index) {
+                                  return Container(
+                                    width: 140,
+                                    height: 180,
+                                    margin: EdgeInsets.only(
+                                      right: 20,
+                                      top: 10,
+                                      bottom: 10,
+                                    ),
+                                    child: InkWell(
+                                      onTap: () {
+                                        context.pushRoute(
+                                          app_routes.ProductDetailsView(
+                                            selectedProduct:
+                                                listSameCatProd[index],
+                                          ),
+                                        );
+                                      },
+                                      child: buildProductCard(
+                                        listSameCatProd[index],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+
+                          SizedBox(height: 100),
                         ],
                       ),
                     ),
@@ -367,7 +440,7 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                           final c = Get.find<SupabaseController>();
                           c.indexNavigationBar = 1;
                           c.update();
-                          context.pushRoute(CartView());
+                          context.pushRoute(app_routes.CartView());
                         },
                         child: Container(
                           width: 55,
@@ -402,6 +475,8 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                                         product.keys.first ==
                                         widget.selectedProduct,
                                   );
+                                  Get.find<SupabaseController>()
+                                      .saveLocalData();
                                   Get.find<SupabaseController>().update();
                                 } else {
                                   CartProducts.products.add(
@@ -414,6 +489,8 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
                                   Products.historyProducts.add(
                                     widget.selectedProduct,
                                   );
+                                  Get.find<SupabaseController>()
+                                      .saveLocalData();
                                   Get.find<SupabaseController>().update();
                                 }
                               });

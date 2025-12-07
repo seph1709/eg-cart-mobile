@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/models/product_model.dart';
+import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -47,13 +48,18 @@ class _HistoryViewState extends State<HistoryView> {
           itemCount: Products.historyProducts.length,
           itemBuilder: (context, index) {
             final product = Products.historyProducts[index];
-            return ListTile(
-              leading: SizedBox(
-                width: 100,
-                child: Image.network(product.image),
+            return GestureDetector(
+              onTap: () {
+                context.pushRoute(ProductDetailsView(selectedProduct: product));
+              },
+              child: ListTile(
+                leading: SizedBox(
+                  width: 100,
+                  child: Image.network(product.image),
+                ),
+                title: Text(product.name),
+                subtitle: Text('₱${product.price.toStringAsFixed(2)}'),
               ),
-              title: Text(product.name),
-              subtitle: Text('₱${product.price.toStringAsFixed(2)}'),
             );
           },
         ),

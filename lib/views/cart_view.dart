@@ -165,6 +165,8 @@ class _CartViewState extends State<CartView> {
                                                 } else {
                                                   selectedProduct.add(index);
                                                 }
+                                                Get.find<SupabaseController>()
+                                                    .saveLocalData();
                                               });
                                             } else {
                                               context.pushRoute(
@@ -297,6 +299,8 @@ class _CartViewState extends State<CartView> {
                                       select = false;
                                     });
                                     Get.find<SupabaseController>().update();
+                                    Get.find<SupabaseController>()
+                                        .saveLocalData();
                                   },
                                   child: Container(
                                     width: 150,

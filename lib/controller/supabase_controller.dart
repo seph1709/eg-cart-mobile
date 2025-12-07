@@ -1,31 +1,82 @@
+import 'dart:convert';
+
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/models/uwb_model.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences_android/shared_preferences_android.dart';
 
 class SupabaseController extends GetxController {
   late final SupabaseClient supabaseClient;
   int indexNavigationBar = 0;
+
+  final SharedPreferencesAsyncAndroidOptions options =
+      SharedPreferencesAsyncAndroidOptions(
+        backend: SharedPreferencesAndroidBackendLibrary.SharedPreferences,
+        originalSharedPreferencesOptions: AndroidSharedPreferencesStoreOptions(
+          fileName: 'egcart_sharedpreference',
+        ),
+      );
+
+  late final SharedPreferences prefs;
 
   String? prioritizedProductId;
   final Set<String> hiddenProductPaths = {};
 
   String username = 'User';
 
+  String privacyPolicy = "";
+
   @override
   void onInit() {
     super.onInit();
     supabaseClient = Supabase.instance.client;
+    SharedPreferences.getInstance().then((val) {
+      prefs = val;
+      getLocalData().then((_) => update());
+    });
   }
 
   @override
   void onReady() {
     super.onReady();
-    getFeaturedProducts();
-    getUwbIP();
-    getGeoJson();
+    getDocumentPolicy("privacy_policy").then((_) => update());
+    getFeaturedProducts().then((_) => update());
+    getUwbIP().then((_) => update());
+    getGeoJson().then((_) => update());
+  }
+
+  Future<void> getLocalData() async {
+    try {
+      username = prefs.getString('username') ?? "user";
+      var prodHistory = prefs.getString('products_history');
+
+      if (prodHistory != null) {
+        Products.prodHistfromJson(jsonDecode(prodHistory));
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+    }
+  }
+
+  Future<void> saveLocalData() async {
+    try {
+      await prefs.setString('username', username);
+
+      await prefs.setString(
+        'products_history',
+        jsonEncode(Product.toJson(Products.historyProducts)),
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        print("errrrorr $e");
+      }
+    }
   }
 
   String getTotal() {
@@ -159,7 +210,9 @@ class SupabaseController extends GetxController {
       final isIpAdressExist = response.first["ip_address"] != null;
       final ipIdExist = response.first["id"] != null;
 
-      print("validdd $response");
+      if (kDebugMode) {
+        print("validdd $response");
+      }
 
       return isIpAdressExist && ipIdExist;
     } catch (e) {
@@ -167,7 +220,9 @@ class SupabaseController extends GetxController {
         print(e);
       }
 
-      print("returning from error $e");
+      if (kDebugMode) {
+        print("returning from error $e");
+      }
 
       return false;
     }
@@ -190,6 +245,23 @@ class SupabaseController extends GetxController {
       }
 
       return false;
+    }
+  }
+
+  Future<void> getDocumentPolicy(String name) async {
+    try {
+      final response = await supabaseClient
+          .from('document_policy')
+          .select("*")
+          .eq('name', name);
+
+      final content = response.first["content"] ?? "";
+      privacyPolicy = content.toString();
+      update();
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
     }
   }
 }

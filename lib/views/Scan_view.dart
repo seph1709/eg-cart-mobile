@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
@@ -17,10 +18,12 @@ class ScanView extends StatefulWidget {
 
 class _ScanViewState extends State<ScanView> {
   final textEditingController = TextEditingController();
+  var showFloatingPrivacyPolicy = false;
   @override
   Widget build(BuildContext context) {
     final c = Get.find<SupabaseController>();
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       home: Scaffold(
         appBar: AppBar(
           toolbarHeight: 0,
@@ -73,7 +76,7 @@ class _ScanViewState extends State<ScanView> {
                           child: Text(
                             "Please scan the QR code displayed in the cart or input the pin code to proceed.",
                             style: TextStyle(
-                              color: Colors.green[800],
+                              color: Colors.grey[800],
                               fontSize: 16,
                             ),
                           ),
@@ -97,6 +100,7 @@ class _ScanViewState extends State<ScanView> {
                               if (val != null) {
                                 var isValid = await c.verifyPinCode(val);
                                 if (isValid) {
+                                  // ignore: use_build_context_synchronously
                                   context.replaceRoute(HomeView());
                                 }
                               }
@@ -182,6 +186,37 @@ class _ScanViewState extends State<ScanView> {
                                 },
                               ),
                             ),
+                          ),
+                        ),
+                        SizedBox(height: 20),
+                        RichText(
+                          textAlign: TextAlign.center,
+                          text: TextSpan(
+                            text: "By using this app, you agree to our\n",
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 13,
+                            ),
+                            children: [
+                              WidgetSpan(
+                                child: Container(
+                                  padding: EdgeInsets.only(top: 5),
+                                  child: RichText(
+                                    text: TextSpan(
+                                      recognizer: TapGestureRecognizer()
+                                        ..onTap = () {
+                                          context.pushRoute(PrivacyPolicy());
+                                        },
+                                      text: "Privacy Policy.",
+                                      style: TextStyle(
+                                        color: Colors.green[800],
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],

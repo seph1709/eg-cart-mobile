@@ -97,6 +97,7 @@ class _ProfileViewState extends State<ProfileView> {
                                           setState(() {
                                             c.username = value;
                                             isEditing = false;
+                                            c.saveLocalData();
                                           });
                                         },
                                         autofocus: true,
