@@ -1,6 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
-import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:egcart_mobile/route/route.gr.dart' hide WishlistView;
 import 'package:egcart_mobile/views/widgets/bottom_navbar.dart';
 import 'package:egcart_mobile/views/wishlist_view.dart';
 import 'package:flutter/material.dart';

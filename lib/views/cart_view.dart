@@ -116,7 +116,7 @@ class _CartViewState extends State<CartView> {
                                 top: MediaQuery.of(context).size.height / 2.6,
                               ),
                               child: Text(
-                                "No products found :(",
+                                "No products found",
                                 style: TextStyle(
                                   fontSize: 18,
                                   color: Colors.grey,

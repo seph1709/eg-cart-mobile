@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:egcart_mobile/widgets/connectivity_gate.dart';
 
 import 'controller/supabase_controller.dart';
 
@@ -32,6 +33,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
       routerConfig: _appRouter.config(), // Use the delegate from your router
+      builder: (context, child) {
+        return ConnectivityGate(child: child ?? const SizedBox());
+      },
     );
   }
 }

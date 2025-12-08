@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:egcart_mobile/models/announcement_model.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/models/uwb_model.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
@@ -299,6 +300,34 @@ class SupabaseController extends GetxController {
       if (kDebugMode) {
         print(e);
       }
+    }
+  }
+
+  Future<List<Announcement>> getAnnouncements() async {
+    try {
+      List<Announcement> annoucements = [];
+      final response = await supabaseClient.from('announcement').select("*");
+
+      if (response.isNotEmpty) {
+        for (var curr in response) {
+          annoucements.add(
+            Announcement(
+              id: curr["id"],
+              title: curr["title"],
+              description: curr["description"],
+              createdAt: DateTime.parse(curr["created_at"]),
+            ),
+          );
+        }
+        return annoucements;
+      } else {
+        return [];
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+      return [];
     }
   }
 }

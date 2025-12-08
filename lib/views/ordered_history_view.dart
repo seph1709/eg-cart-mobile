@@ -4,6 +4,7 @@ import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 @RoutePage()
@@ -110,50 +111,56 @@ class _OrderedHistoryViewState extends State<OrderedHistoryView> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
+        toolbarHeight: 40,
+        backgroundColor: Colors.white,
         elevation: 0,
         shadowColor: Colors.transparent,
-        backgroundColor: Colors.green[600],
         scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: Colors.white,
-          ),
-          onPressed: () {
-            if (isSelectionMode) {
-              setState(() {
-                selectedIndices.clear();
-                isSelectionMode = false;
-              });
-            } else {
-              Navigator.pop(context);
-            }
-          },
+        systemOverlayStyle: SystemUiOverlayStyle(
+          statusBarColor: Colors.white,
+          systemNavigationBarColor: Colors.grey[50],
+          statusBarIconBrightness: Brightness.dark,
         ),
+        leading: InkWell(
+          onTap: () => Navigator.pop(context),
+          child: Padding(
+            padding: EdgeInsetsGeometry.only(left: 15),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 20,
+                  color: Colors.grey[800],
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Back',
+                  style: TextStyle(fontSize: 17, color: Colors.grey[800]),
+                ),
+              ],
+            ),
+          ),
+        ),
+        leadingWidth: 150,
         title: isSelectionMode
             ? Text(
                 '${selectedIndices.length} selected',
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Colors.green[600],
                   fontWeight: FontWeight.w600,
+                  fontSize: 16,
                 ),
               )
-            : const Text(
-                'Order History',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+            : Container(),
         actions: isSelectionMode
             ? [
                 IconButton(
-                  icon: const Icon(Icons.select_all, color: Colors.white),
+                  icon: Icon(Icons.select_all, color: Colors.green[600]),
                   onPressed: _toggleSelectAll,
                   tooltip: 'Select All',
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.white),
+                  icon: Icon(Icons.delete_outline, color: Colors.red[600]),
                   onPressed: _deleteSelectedItems,
                   tooltip: 'Delete',
                 ),
@@ -182,7 +189,7 @@ class _OrderedHistoryViewState extends State<OrderedHistoryView> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Your previously viewed products will appear here',
+                      'Your previously ordered products will appear here',
                       style: TextStyle(fontSize: 14, color: Colors.grey[500]),
                       textAlign: TextAlign.center,
                     ),

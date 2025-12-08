@@ -20,39 +20,15 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
-  late List<Announcement> announcements;
+  List<Announcement> announcements = [];
 
   @override
   void initState() {
     super.initState();
-    // Initialize with sample announcements
-    announcements = [
-      Announcement(
-        id: '1',
-        title: 'Welcome to E-G Cart!',
-        description:
-            'Thank you for using our grocery delivery service. Get fresh produce delivered to your doorstep.',
-        createdAt: DateTime.now().subtract(Duration(hours: 2)),
-        isRead: false,
-      ),
-      Announcement(
-        id: '2',
-        title: 'Special Offer This Week',
-        description: '20% off on all vegetables. Use code FRESH20 at checkout.',
-        createdAt: DateTime.now().subtract(Duration(days: 1)),
-        isRead: false,
-      ),
-      Announcement(
-        id: '3',
-        title: 'New Products Available',
-        description: 'Check out our new selection of organic dairy products.',
-        createdAt: DateTime.now().subtract(Duration(days: 2)),
-        isRead: true,
-      ),
-    ];
 
     // Apply persisted read states (if any) by asking controller to load local data
     final controller = Get.find<SupabaseController>();
+
     controller.getLocalData().then((_) {
       final map = controller.announcementsRead;
       if (map.isNotEmpty) {
@@ -63,6 +39,21 @@ class _HomeViewState extends State<HomeView> {
         });
       }
     });
+    controller.getAnnouncements().then(
+      (val) => setState(() {
+        if (val.isNotEmpty) {
+          // Add new announcements and apply persisted read states
+          final newAnnouncements = val
+              .map(
+                (a) => a.copyWith(
+                  isRead: controller.announcementsRead[a.id] ?? false,
+                ),
+              )
+              .toList();
+          announcements = [...newAnnouncements];
+        }
+      }),
+    );
   }
 
   void _handleAnnouncementTap(Announcement announcement) {
@@ -97,9 +88,11 @@ class _HomeViewState extends State<HomeView> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'E-G Cart',
+
       home: GetBuilder<SupabaseController>(
         builder: (c) {
           if (Products.products.isEmpty) {
+            c.getFeaturedProducts();
             return Center(
               child: Scaffold(
                 backgroundColor: Colors.grey[50],
@@ -163,6 +156,7 @@ class _HomeViewState extends State<HomeView> {
                       icon: Icon(
                         Icons.notifications_outlined,
                         color: Colors.white,
+                        size: 26,
                       ),
                       onPressed: () {
                         _showAnnouncements(context);
@@ -222,7 +216,7 @@ class _HomeViewState extends State<HomeView> {
                           ),
                           SizedBox(height: 12),
                           Text(
-                            'Browse our wide selection of fresh produce delivered to your door',
+                            'Browse our wide selection of grocery items and quickly locate them in-store.',
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.85),
                               fontSize: 14,
@@ -388,7 +382,14 @@ class _HomeViewState extends State<HomeView> {
                                 ),
                               ),
                               GestureDetector(
-                                onTap: () {},
+                                onTap: () {
+                                  context.pushRoute(
+                                    CategoryView(
+                                      categoryName: "Featured Products",
+                                      isGetAll: true,
+                                    ),
+                                  );
+                                },
                                 child: Text(
                                   'See All',
                                   style: TextStyle(

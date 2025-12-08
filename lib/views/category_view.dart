@@ -12,7 +12,9 @@ import 'widgets/product_card_widget.dart';
 class CategoryView extends StatefulWidget {
   final String categoryName;
 
-  const CategoryView({super.key, required this.categoryName});
+  final bool? isGetAll;
+
+  const CategoryView({super.key, required this.categoryName, this.isGetAll});
 
   @override
   State<CategoryView> createState() => _CategoryViewState();
@@ -23,7 +25,15 @@ class _CategoryViewState extends State<CategoryView> {
   Widget build(BuildContext context) {
     final controller = Get.find<SupabaseController>();
     ProductsByCategory.products.clear();
-    controller.getProductsByCategory(widget.categoryName);
+
+    if (widget.isGetAll != null) {
+      controller.getFeaturedProducts().then((_) {
+        ProductsByCategory.products = Products.products;
+        controller.update();
+      });
+    } else {
+      controller.getProductsByCategory(widget.categoryName);
+    }
     return MaterialApp(
       home: GetBuilder<SupabaseController>(
         builder: (c) {

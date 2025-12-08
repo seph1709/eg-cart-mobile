@@ -77,6 +77,8 @@ class _ProductDetailsViewState extends State<ProductDetailsView> {
         duration: const Duration(seconds: 2),
       ),
     );
+
+    Get.find<SupabaseController>().update();
   }
 
   var listSameCatProd = [];

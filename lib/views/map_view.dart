@@ -1827,45 +1827,48 @@ class _MapViewState extends State<MapView>
                         child: Icon(Icons.arrow_back, color: Colors.white),
                       ),
                     ),
-                    Positioned(
-                      top: 0,
-                      right: 10,
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _isConnected
-                              ? Colors.green.withOpacity(0.9)
-                              : Colors.orange.withOpacity(0.9),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: _isConnected ? Colors.white : Colors.red,
-                                shape: BoxShape.circle,
+                    if (kDebugMode)
+                      Positioned(
+                        top: 0,
+                        right: 10,
+                        child: Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _isConnected
+                                ? Colors.green.withOpacity(0.9)
+                                : Colors.orange.withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: _isConnected
+                                      ? Colors.white
+                                      : Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              _isConnected ? 'Connected' : 'Reconnecting...',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
+                              SizedBox(width: 6),
+                              Text(
+                                _isConnected ? 'Connected' : 'Reconnecting...',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
                 // ✅ NEW: Anchor health status indicator (debug mode)
