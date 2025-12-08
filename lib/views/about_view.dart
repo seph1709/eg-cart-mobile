@@ -83,7 +83,7 @@ class _AboutViewState extends State<AboutView> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'A friendly grocery shopping app — built as a capstone project for Research and Design.',
+                        'A friendly grocery shopping app — built as a capstone project.',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 14, color: Colors.grey[700]),
                       ),

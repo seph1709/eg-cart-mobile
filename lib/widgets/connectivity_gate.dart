@@ -114,7 +114,7 @@ class _NoWifiModal extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'You are not connected to a Wi‑Fi network. For the best experience, please connect to Wi‑Fi.',
+              'You are not connected to a Wi-Fi network. This app is designed to work only with an active Wi-Fi connection because it uses IPS. In order for it to work, the app needs to listen for incoming websocket data from the UWB. Please connect to the Wi-Fi network where the UWB is connected.',
               style: TextStyle(color: Colors.grey[800]),
             ),
             const SizedBox(height: 18),
