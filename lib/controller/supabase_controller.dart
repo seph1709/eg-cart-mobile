@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:egcart_mobile/models/announcement_model.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/models/uwb_model.dart';
+import 'package:egcart_mobile/models/wishlist_model.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
@@ -58,6 +59,38 @@ class SupabaseController extends GetxController {
       username = prefs.getString('username') ?? "user";
       var prodHistory = prefs.getString('products_history');
       var announcementsReadStr = prefs.getString('announcements_read');
+      var wishlistID = prefs.getString('wishlistID');
+      await getFeaturedProducts();
+      print(wishlistID);
+      if (wishlistID != null) {
+        var listID = jsonDecode(wishlistID);
+        print(listID);
+        if (listID == null) return;
+        List<WishlistItem> tempListWishlist = [];
+        var uniqueId = 1;
+        for (var id in listID) {
+          print(id);
+          var prod = Products.products.firstWhere((curr) {
+            return curr.id == id.toString();
+          });
+
+          print(prod);
+          var wishlistItem = WishlistItem(
+            id: uniqueId.toString(),
+            productId: prod.id,
+            productName: prod.name,
+            price: prod.price,
+            image: prod.image,
+            supplier: prod.supplier,
+            discount: prod.discount,
+            dateAdded: DateTime.parse(prod.dateAdded),
+          );
+          tempListWishlist.add(wishlistItem);
+          uniqueId++;
+        }
+        Wishlist.items = tempListWishlist;
+        print(tempListWishlist);
+      }
 
       if (announcementsReadStr != null) {
         try {
@@ -80,6 +113,19 @@ class SupabaseController extends GetxController {
   }
 
   Future<void> saveLocalData() async {
+    List<String> listWishListId = [];
+
+    for (var item in Wishlist.items) {
+      listWishListId.add(item.productId);
+    }
+
+    try {
+      await prefs.setString('wishlistID', jsonEncode(listWishListId));
+    } catch (e) {
+      if (kDebugMode) {
+        print(e);
+      }
+    }
     try {
       await prefs.setString('username', username);
 

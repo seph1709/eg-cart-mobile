@@ -2747,37 +2747,38 @@ class StaticMapCanvas extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
     canvas.drawCircle(pixelPosition, 8, borderPaint);
+    if (kDebugMode) {
+      // Quality indicator text
+      final qualityText = positionQuality == PositionQuality.good
+          ? 'Cart'
+          : positionQuality == PositionQuality.degraded
+          ? 'Cart (Est.)'
+          : 'Cart (Lost)';
 
-    // Quality indicator text
-    final qualityText = positionQuality == PositionQuality.good
-        ? 'Cart'
-        : positionQuality == PositionQuality.degraded
-        ? 'Cart (Est.)'
-        : 'Cart (Lost)';
+      final textSpan = TextSpan(
+        text:
+            '$qualityText\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: opacity),
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          backgroundColor: color.withValues(alpha: 0.9 * opacity),
+          height: 1.4,
+        ),
+      );
 
-    final textSpan = TextSpan(
-      text:
-          '$qualityText\n${position.dx.toStringAsFixed(2)}, ${position.dy.toStringAsFixed(2)}m',
-      style: TextStyle(
-        color: Colors.white.withValues(alpha: opacity),
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-        backgroundColor: color.withValues(alpha: 0.9 * opacity),
-        height: 1.4,
-      ),
-    );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+      );
 
-    final textPainter = TextPainter(
-      text: textSpan,
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
-
-    textPainter.layout(minWidth: 0, maxWidth: 110);
-    textPainter.paint(
-      canvas,
-      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
-    );
+      textPainter.layout(minWidth: 0, maxWidth: 110);
+      textPainter.paint(
+        canvas,
+        Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 20),
+      );
+    }
   }
 
   // ✅ Draw dashed circle for degraded quality
@@ -2859,28 +2860,29 @@ class StaticMapCanvas extends CustomPainter {
       5,
       circlePaint,
     );
+    if (kDebugMode) {
+      final textSpan = TextSpan(
+        text: id,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          backgroundColor: Color(0xFF1f2937),
+        ),
+      );
 
-    final textSpan = TextSpan(
-      text: id,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 11,
-        fontWeight: FontWeight.bold,
-        backgroundColor: Color(0xFF1f2937),
-      ),
-    );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+      );
 
-    final textPainter = TextPainter(
-      text: textSpan,
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
-
-    textPainter.layout(minWidth: 0, maxWidth: 80);
-    textPainter.paint(
-      canvas,
-      Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
-    );
+      textPainter.layout(minWidth: 0, maxWidth: 80);
+      textPainter.paint(
+        canvas,
+        Offset(pixelPosition.dx - textPainter.width / 2, pixelPosition.dy + 6),
+      );
+    }
   }
 
   void _drawPath(

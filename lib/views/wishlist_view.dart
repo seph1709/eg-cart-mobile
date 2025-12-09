@@ -27,6 +27,7 @@ class _WishlistViewState extends State<WishlistView> {
   void _removeFromWishlist(String productId) {
     setState(() {
       Wishlist.removeItem(productId);
+      Get.find<SupabaseController>().saveLocalData();
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -304,11 +305,23 @@ class _WishlistViewState extends State<WishlistView> {
                                 ),
                               );
                             },
-                            child: WishlistItemCard(
-                              item: item,
-                              onRemove: () =>
-                                  _removeFromWishlist(item.productId),
-                              onAddToCart: () => _addToCart(item),
+                            child: InkWell(
+                              onTap: () {
+                                context.pushRoute(
+                                  ProductDetailsView(
+                                    selectedProduct: Products.products
+                                        .firstWhere(
+                                          (prod) => prod.id == item.productId,
+                                        ),
+                                  ),
+                                );
+                              },
+                              child: WishlistItemCard(
+                                item: item,
+                                onRemove: () =>
+                                    _removeFromWishlist(item.productId),
+                                onAddToCart: () => _addToCart(item),
+                              ),
                             ),
                           ),
                         );
