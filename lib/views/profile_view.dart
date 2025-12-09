@@ -196,9 +196,7 @@ class _ProfileViewState extends State<ProfileView> {
                           'mailto:$email?subject=$subject&body=$body',
                         );
                         try {
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri);
-                          }
+                          await launchUrl(uri);
                         } catch (_) {
                           // ignore per user preference
                         }

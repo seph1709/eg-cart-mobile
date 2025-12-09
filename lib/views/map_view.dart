@@ -53,7 +53,6 @@ class _MapViewState extends State<MapView>
   bool _isFollowingTag = false;
 
   String? _selectedProductId;
-  Offset? _selectedProductPosition;
 
   String get _wsUrl => 'ws://$_esp32IpAddress/ws';
   var links =
@@ -253,7 +252,7 @@ class _MapViewState extends State<MapView>
     if (_selectedProductId != null) {
       setState(() {
         _selectedProductId = null;
-        _selectedProductPosition = null;
+        Get.find<SupabaseController>().selectedProductPosition = null;
       });
     }
 
@@ -327,7 +326,7 @@ class _MapViewState extends State<MapView>
     if (_selectedProductId != null) {
       setState(() {
         _selectedProductId = null;
-        _selectedProductPosition = null;
+        Get.find<SupabaseController>().selectedProductPosition = null;
       });
     }
   }
@@ -336,10 +335,10 @@ class _MapViewState extends State<MapView>
     setState(() {
       if (_selectedProductId == productId) {
         _selectedProductId = null;
-        _selectedProductPosition = null;
+        Get.find<SupabaseController>().selectedProductPosition = null;
       } else {
         _selectedProductId = productId;
-        _selectedProductPosition = position;
+        Get.find<SupabaseController>().selectedProductPosition = position;
       }
     });
 
@@ -2038,11 +2037,12 @@ class _MapViewState extends State<MapView>
                     ),
                   ),
                 if (_selectedProductId != null &&
-                    _selectedProductPosition != null)
+                    Get.find<SupabaseController>().selectedProductPosition !=
+                        null)
                   Builder(
                     builder: (context) {
                       final screenPos = _getScreenPosition(
-                        _selectedProductPosition!,
+                        Get.find<SupabaseController>().selectedProductPosition!,
                       );
                       return ProductCallout(
                         productId: _selectedProductId!,
@@ -2050,7 +2050,9 @@ class _MapViewState extends State<MapView>
                         onClose: () {
                           setState(() {
                             _selectedProductId = null;
-                            _selectedProductPosition = null;
+                            Get.find<SupabaseController>()
+                                    .selectedProductPosition =
+                                null;
                           });
                         },
                       );
@@ -2130,118 +2132,126 @@ class ProductCallout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: position.dx - 75,
-      top: position.dy + 35,
-      child: GestureDetector(
-        onTap: () {},
-        child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(16),
-          shadowColor: Colors.black26,
-          child: Container(
-            width: 150,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
+    return GetBuilder<SupabaseController>(
+      builder: (c) {
+        return Positioned(
+          left: position.dx - 75,
+          top: position.dy + 35,
+          child: GestureDetector(
+            onTap: () {},
+            child: Material(
+              elevation: 8,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFe5e7eb), width: 2),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+              shadowColor: Colors.black26,
+              child: Container(
+                width: 150,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFe5e7eb), width: 2),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF3b82f6).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(
-                        Icons.inventory_2,
-                        color: Color(0xFF3b82f6),
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        CartProducts.products
-                            .where((p) => p.id == productId)
-                            .first
-                            .name,
-                        style: const TextStyle(
-                          color: Color(0xFF1f2937),
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'category: ${CartProducts.products.where((p) => p.id == productId).first.category}',
-                  style: TextStyle(
-                    color: Color(0xFF6b7280),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  'rack level: ${CartProducts.products.where((p) => p.id == productId).first.rackLevel}',
-                  style: TextStyle(
-                    color: Color(0xFF6b7280),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                GestureDetector(
-                  onTap: () {
-                    final c = Get.find<SupabaseController>();
-                    c.prioritizedProductId = productId;
-                    if (kDebugMode) {
-                      debugPrint('🎯 Prioritized product: $productId');
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10b981).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
+                    Row(
                       children: [
-                        Icon(
-                          Icons.arrow_circle_up_rounded,
-                          color: Color(0xFF10b981),
-                          size: 20,
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3b82f6).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.inventory_2,
+                            color: Color(0xFF3b82f6),
+                            size: 18,
+                          ),
                         ),
-                        SizedBox(width: 6),
-                        Text(
-                          'Navigate',
-                          style: TextStyle(
-                            color: Color(0xFF10b981),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            CartProducts.products
+                                .where((p) => p.id == productId)
+                                .first
+                                .name,
+                            style: const TextStyle(
+                              color: Color(0xFF1f2937),
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'category: ${CartProducts.products.where((p) => p.id == productId).first.category}',
+                      style: TextStyle(
+                        color: Color(0xFF6b7280),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      'rack level: ${CartProducts.products.where((p) => p.id == productId).first.rackLevel}',
+                      style: TextStyle(
+                        color: Color(0xFF6b7280),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      onTap: () {
+                        c.hiddenProductPaths.remove(productId);
+                        c.prioritizedProductId = productId;
+                        c.selectedProductPosition = null;
+                        c.update();
+                        if (kDebugMode) {
+                          debugPrint('🎯 Prioritized product: $productId');
+                        }
+                      },
+                      child: c.prioritizedProductId != productId
+                          ? Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10b981).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.arrow_circle_up_rounded,
+                                    color: Color(0xFF10b981),
+                                    size: 20,
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Navigate',
+                                    style: TextStyle(
+                                      color: Color(0xFF10b981),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : SizedBox.shrink(),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -3123,19 +3133,18 @@ class StaticMapCanvas extends CustomPainter {
       canvas.drawCircle(pixel, radiusPixels, circlePaint);
       canvas.drawCircle(pixel, radiusPixels, borderPaint);
     } else {
-      final labelPaint = Paint()
-        ..color = const Color(0xFF1f2937)
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(pixel, 6, labelPaint);
+      // final labelPaint = Paint()
+      //   ..color = const Color(0xFF1f2937)
+      //   ..style = PaintingStyle.fill;
+      // canvas.drawCircle(pixel, 6, labelPaint);
 
       if (properties?['name'] != null) {
         final textSpan = TextSpan(
           text: properties!['name'] as String,
-          style: const TextStyle(
-            color: Color(0xFF1f2937),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            backgroundColor: Color(0xFFffffff),
+          style: TextStyle(
+            color: Colors.green[600],
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
           ),
         );
 

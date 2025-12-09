@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,12 +32,12 @@ class _OrderedHistoryViewState extends State<OrderedHistoryView> {
     selectedIndices = {};
   }
 
-  double _getTotalPrice() {
+  String _getTotalPrice() {
     double total = 0;
     for (var product in historyProducts) {
       total += product.price;
     }
-    return total;
+    return formatDoubleWithCommas(total);
   }
 
   void _deleteSelectedItems() {
@@ -283,7 +284,7 @@ class _OrderedHistoryViewState extends State<OrderedHistoryView> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  '₱${_getTotalPrice().toStringAsFixed(2)}',
+                                  '₱${_getTotalPrice()}',
                                   style: TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
@@ -340,7 +341,9 @@ class _OrderedHistoryViewState extends State<OrderedHistoryView> {
                       ],
                     ),
                   ),
-                  ...historyProducts.asMap().entries.map((entry) {
+                  ...historyProducts.asMap().entries.toList().reversed.map((
+                    entry,
+                  ) {
                     final index = entry.key;
                     final product = entry.value;
                     final isSelected = selectedIndices.contains(index);

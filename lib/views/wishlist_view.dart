@@ -3,6 +3,7 @@ import 'package:egcart_mobile/controller/supabase_controller.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/models/wishlist_model.dart';
 import 'package:egcart_mobile/route/route.gr.dart';
+import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -16,12 +17,12 @@ class WishlistView extends StatefulWidget {
 }
 
 class _WishlistViewState extends State<WishlistView> {
-  double _getTotalPrice() {
+  String _getTotalPrice() {
     double total = 0;
     for (var item in Wishlist.items) {
       total += item.price;
     }
-    return total;
+    return formatDoubleWithCommas(total);
   }
 
   void _removeFromWishlist(String productId) {
@@ -233,7 +234,7 @@ class _WishlistViewState extends State<WishlistView> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '₱${_getTotalPrice().toStringAsFixed(2)}',
+                                      '₱${_getTotalPrice()}',
                                       style: TextStyle(
                                         fontSize: 20,
                                         fontWeight: FontWeight.bold,
@@ -259,7 +260,7 @@ class _WishlistViewState extends State<WishlistView> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '₱${(Wishlist.items.isEmpty ? 0 : _getTotalPrice() / Wishlist.items.length).toStringAsFixed(2)}',
+                                      '₱${(Wishlist.items.isEmpty ? 0 : _getTotalPrice())}',
                                       style: TextStyle(
                                         fontSize: 20,
                                         fontWeight: FontWeight.bold,
@@ -285,7 +286,9 @@ class _WishlistViewState extends State<WishlistView> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      ...Wishlist.items.asMap().entries.map((entry) {
+                      ...Wishlist.items.asMap().entries.toList().reversed.map((
+                        entry,
+                      ) {
                         final index = entry.key;
                         final item = entry.value;
                         return Padding(

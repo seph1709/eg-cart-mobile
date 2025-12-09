@@ -142,9 +142,7 @@ class _CartViewState extends State<CartView> {
                                         mainAxisSpacing: 30,
                                         childAspectRatio: 0.8,
                                       ),
-                                  itemCount: CartProducts.products.length > 10
-                                      ? 10
-                                      : CartProducts.products.length,
+                                  itemCount: CartProducts.products.length,
                                   itemBuilder: (context, index) {
                                     // return Text("");
                                     final currenProduct =

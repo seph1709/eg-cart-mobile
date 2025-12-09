@@ -6,6 +6,7 @@ import 'package:egcart_mobile/models/uwb_model.dart';
 import 'package:egcart_mobile/models/wishlist_model.dart';
 import 'package:egcart_mobile/views/widgets/product_card_widget.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -31,6 +32,8 @@ class SupabaseController extends GetxController {
   String username = 'User';
 
   String privacyPolicy = "";
+
+  Offset? selectedProductPosition;
 
   /// Persisted map of announcement id -> read state
   Map<String, bool> announcementsRead = {};
