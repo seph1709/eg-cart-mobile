@@ -1,6 +1,14 @@
 # egcart_mobile
 
-An android app to help shoppers find products easily. If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
+E‑G Cart is a smart in‑store grocery companion app designed to help shoppers quickly find products and navigate the supermarket more efficiently. By scanning a QR code on the cart, customers can access a real‑time store map, search for items, and see exactly where they are located on the shelves.​
+
+With E‑G Cart, shoppers can search products by name or category and view aisle and shelf locations on an interactive map, reducing the time spent wandering around looking for items. The app can display alternative products and up‑to‑date prices from the store’s inventory system, helping users make faster decisions and plan their purchases more easily.​
+
+For stores that support it, E‑G Cart uses indoor positioning so the app can show the cart’s live position and guide the user along the shortest path through the aisles.​
+
+E‑G Cart is designed with privacy in mind. The app does not require an online account and does not collect personal information such as your name, address, or contact details. Basic usage data like search history and an optional username are stored only on your device to improve your experience and are never uploaded to external servers. 
+
+If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
 
 ## Screenshots
 
