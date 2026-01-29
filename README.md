@@ -1,6 +1,6 @@
 # egcart_mobile
 
-An android app to help shoppers find products easily. For more information you can join the testing program on playstore by sending your email and access this url [Click Me](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
+An android app to help shoppers find products easily. If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
 
 ## Screenshots
 
