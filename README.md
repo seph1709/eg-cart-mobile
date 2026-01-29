@@ -17,7 +17,7 @@ As a student project, this focuses on solving the common "wandering" problem in 
 
 ## ⚠️ Technical Notes & Constraints
 > [!IMPORTANT]  
-> **Hardware Synchronization:** The real-time mapping and indoor positioning functionality require the hardware interface to be properly set up such as UWB Tag and Anchor. If the hardware has not been configured or the QR code is not linked to a valid cart ID, these features will be disabled.
+> **Hardware Synchronization:** The real-time mapping and indoor positioning functionality require the hardware to be properly set up such as UWB Tag and Anchor. If the hardware has not been configured or the QR code is not linked to a valid cart ID, these features will be disabled.
 
 ## 🔒 Privacy Policy
 E-G Cart is designed with user privacy as a priority:
