@@ -1,12 +1,32 @@
-# egcart_mobile
+# E-G Cart 🛒
+**A smart in-store grocery companion for seamless shopping.**
 
-E‑G Cart is a smart in‑store grocery companion app designed to help shoppers quickly find products and navigate the supermarket more efficiently. By scanning a QR code on the cart, customers can access a real‑time store map, search for items, and see exactly where they are located on the shelves.​
+---
 
-With E‑G Cart, shoppers can search products by name or category and view aisle and shelf locations on an interactive map, reducing the time spent wandering around looking for items. The app can display alternative products and up‑to‑date prices from the store’s inventory system, helping users make faster decisions and plan their purchases more easily.​
+## 📖 Project Overview
+**E‑G Cart** is an Android application designed to help shoppers navigate supermarkets efficiently. By scanning a QR code on a smart cart, users can access real‑time store maps, search for items, and see exact shelf locations. 
 
-For stores that support it, E‑G Cart uses indoor positioning so the app can show the cart’s live position and guide the user along the shortest path through the aisles.​
+As a student project, this focuses on solving the common "wandering" problem in large stores, providing a digital layer to the physical shopping experience.
 
-E‑G Cart is designed with privacy in mind. The app does not require an online account and does not collect personal information such as your name, address, or contact details. Basic usage data like search history and an optional username are stored only on your device to improve your experience and are never uploaded to external servers. 
+## ✨ Key Features
+* **Interactive Store Map:** Visualize the layout of the supermarket and pinpoint items instantly.
+* **Smart Search:** Find products by name or category with aisle and shelf-level precision.
+* **Indoor Positioning:** For supported stores, the app tracks the cart’s live position and calculates the shortest route through the aisles.
+* **Real-Time Data:** View up-to-date pricing and alternative product suggestions synced with the store’s inventory.
+* **Privacy-First:** No accounts or personal data collection. Search history and preferences stay on your device.
+
+## ⚠️ Technical Notes & Constraints
+> [!IMPORTANT]  
+> **Hardware Synchronization:** The real-time mapping and indoor positioning functionality require the hardware interface to be properly set up such as UWB Tag and Anchor. If the hardware has not been configured or the QR code is not linked to a valid cart ID, these features will be disabled.
+
+## 🔒 Privacy Policy
+E-G Cart is designed with user privacy as a priority:
+- **No Online Accounts:** No registration required.
+- **Local Storage Only:** Search history and optional usernames are stored exclusively on the user's device.
+- **No Data Harvesting:** Personal information (name, address, contacts) is never collected or uploaded to external servers.
+
+## 👨‍💻 Author
+**[Joseph]** *Computer Engineering Student & Aspiring Android Developer*
 
 If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
 
@@ -20,15 +40,3 @@ If you'd like to join the testing program on the Play Store, please send me your
 <img src="https://github.com/user-attachments/assets/d0fd4e55-3603-4be4-aa99-90bbfc705be7" width=180>
 </div>
 
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
