@@ -40,3 +40,9 @@ If you'd like to join the testing program on the Play Store, please send me your
 <img src="https://github.com/user-attachments/assets/d0fd4e55-3603-4be4-aa99-90bbfc705be7" width=180>
 </div>
 
+## Development Testing
+https://github.com/user-attachments/assets/e7156658-791d-4c4e-a6e2-22696972ff1e
+
+
+
+
