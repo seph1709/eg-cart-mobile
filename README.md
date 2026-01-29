@@ -1,6 +1,16 @@
 # egcart_mobile
 
-A new Flutter project.
+An android app to help shoppers find products easily. For more information join for testing program [Click Me](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
+
+## Screenshots
+
+
+<div align="center">
+<img src="https://github.com/user-attachments/assets/410c2e25-a973-46e1-b4f3-9c8def73778d" width=180>
+<img src="https://github.com/user-attachments/assets/872bbc37-559b-4509-97fb-67e8c42fccb7" width=180>
+<img src="https://github.com/user-attachments/assets/48ef1f10-ac1c-401a-87ac-09e7f84bbd60" width=180>
+<img src="https://github.com/user-attachments/assets/d0fd4e55-3603-4be4-aa99-90bbfc705be7" width=180>
+</div>
 
 ## Getting Started
 
