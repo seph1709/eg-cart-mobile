@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import 'package:egcart_mobile/models/announcement_model.dart';
 import 'package:egcart_mobile/models/product_model.dart';
 import 'package:egcart_mobile/models/uwb_model.dart';
@@ -380,3 +379,4 @@ class SupabaseController extends GetxController {
     }
   }
 }
+
