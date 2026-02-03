@@ -6,7 +6,7 @@
 ## 📖 Project Overview
 **E‑G Cart** is an Android application designed to help shoppers navigate supermarkets efficiently. By scanning a QR code on a smart cart, users can access real‑time store maps, search for items, and see exact shelf locations. 
 
-As a student project, this focuses on solving the common "wandering" problem in large stores, providing a digital layer to the physical shopping experience.
+This focuses on solving the common "wandering" problem in large stores, providing a digital layer to the physical shopping experience.
 
 ## ✨ Key Features
 * **Interactive Store Map:** Visualize the layout of the supermarket and pinpoint items instantly.
