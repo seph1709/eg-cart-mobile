@@ -26,7 +26,7 @@ E-G Cart is designed with user privacy as a priority:
 - **No Data Harvesting:** Personal information (name, address, contacts) is never collected or uploaded to external servers.
 
 ## 👨‍💻 Author
-**[Joseph]** *Computer Engineering Student & Aspiring Android Developer*
+**[Joseph]** *Computer Engineering Student & Aspiring Software Engineer*
 
 If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
 
