@@ -11,7 +11,7 @@ This focuses on solving the common "wandering" problem in large stores, providin
 ## ✨ Key Features
 * **Interactive Store Map:** Visualize the layout of the supermarket and pinpoint items instantly.
 * **Smart Search:** Find products by name or category with aisle and shelf-level precision.
-* **Indoor Positioning:** For supported stores, the app tracks the cart’s live position and calculates the shortest route through the aisles.
+* **Indoor Positioning:** For supported stores, the app tracks the cart’s live position and calculates the shortest route.
 * **Real-Time Data:** View up-to-date pricing and alternative product suggestions synced with the store’s inventory.
 * **Privacy-First:** No accounts or personal data collection. Search history and preferences stay on your device.
 
@@ -29,6 +29,11 @@ E-G Cart is designed with user privacy as a priority:
 **[Joseph]** *Computer Engineering Student & Aspiring Software Engineer*
 
 If you'd like to join the testing program on the Play Store, please send me your email address and access ths link [Testing Program](https://play.google.com/apps/testing/com.seph1709.egcart_mobile)
+
+<div align="center">
+<img src="https://github.com/user-attachments/assets/740d887d-ebc8-444e-b4de-8df6554d0f25" width=180>
+<img src="https://github.com/user-attachments/assets/d23e9440-6ec5-4a30-ac84-0e633cb7ed41" width=180>
+</div>
 
 ## Screenshots
 
